@@ -57,6 +57,13 @@ test("coerces a non-boolean pitchEnabled to the default", () => {
   expect(loaded.pitchEnabled).toBe(DEFAULT_SETTINGS.pitchEnabled);
 });
 
+test("falls back to defaults when no storage is available at all", () => {
+  // Safari with site data blocked throws on *reading* the localStorage
+  // identifier, which a default parameter value cannot guard against.
+  expect(loadSettings(null)).toEqual(DEFAULT_SETTINGS);
+  expect(() => saveSettings(DEFAULT_SETTINGS, null)).not.toThrow();
+});
+
 test("loading does not throw when storage rejects reads", () => {
   const hostile = {
     ...memoryStorage(),

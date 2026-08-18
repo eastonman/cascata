@@ -8,10 +8,11 @@ import { ringSlot, type AbsoluteRing } from "./ring";
  * expressed by `earliestIndex` moving forward, so a timeline built on these
  * indices stays correct after the ring wraps rather than drifting.
  *
- * Int16 rather than Float32 halves the 8-minute budget to 46 MB, and the
- * quantisation floor (-90 dBFS) sits below the display floor (-92 dBFS
- * default) and the YIN silence gate (-55 dBFS), so nothing downstream can see
- * it.
+ * Int16 rather than Float32 halves the 8-minute budget to 46 MB. The
+ * quantisation step is about -90 dBFS full-scale, which is above the -92 dBFS
+ * default display floor — but that comparison is the wrong one: the noise
+ * spreads across a 4096-point STFT, landing near -130 dBFS per bin. It is well
+ * under both the display floor and the -55 dBFS YIN silence gate.
  */
 export class PcmRing implements AbsoluteRing {
   readonly capacity: number;

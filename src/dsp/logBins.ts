@@ -104,7 +104,14 @@ export class LogBinMap {
       const last = Math.floor(edgeHi / hzPerBin);
       this.lo[i] = Math.max(0, first);
       this.hi[i] = Math.min(this.fftBinCount - 1, last);
-      this.fpos[i] = center / hzPerBin;
+      // Above Nyquist there is no data at all. Left alone, these bins fall into
+      // the interpolation branch, where both neighbours clamp to the same last
+      // FFT bin and every one of them degenerates to the Nyquist bin's value —
+      // a solid coloured stripe across the top of the display where it should
+      // read empty. Reachable whenever the device rate is low: a Bluetooth
+      // headset mic on macOS drops the context to 16 kHz, well under the
+      // 12 kHz display ceiling.
+      this.fpos[i] = center * 2 > sampleRate ? -1 : center / hzPerBin;
     }
   }
 
@@ -133,11 +140,13 @@ export class LogBinMap {
       const hi = this.hi[i];
       let value: number;
 
-      if (lo <= hi) {
+      const p = this.fpos[i];
+      if (p < 0) {
+        value = -127; // above Nyquist: no data
+      } else if (lo <= hi) {
         value = magDb[lo];
         for (let k = lo + 1; k <= hi; k++) if (magDb[k] > value) value = magDb[k];
       } else {
-        const p = this.fpos[i];
         const a = Math.min(last, Math.max(0, Math.floor(p)));
         const b = Math.min(last, a + 1);
         value = magDb[a] + (magDb[b] - magDb[a]) * (p - a);

@@ -90,7 +90,7 @@ export class App {
 
     this.controls = createControls(root, this.settings, {
       onToggleCapture: () => void this.toggleCapture(),
-      onTogglePlay: () => this.togglePlay(),
+      onTogglePlay: () => void this.togglePlay(),
       onFollow: () => this.view?.follow(),
       onExport: () => this.exportWav(),
       onSettingsChange: (patch) => this.applySettings(patch),
@@ -155,23 +155,37 @@ export class App {
       return;
     }
 
-    // Created on first capture, not at construction: an AudioContext made
-    // before a user gesture starts suspended, and Safari will not resume it.
-    this.audioContext ??= new AudioContext();
-    if (this.audioContext.state === "suspended") await this.audioContext.resume();
-    this.source ??= new WebAudioSource(this.audioContext);
-
+    let source: AudioSource;
     try {
-      await this.source.start((chunk) => this.pcm?.write(chunk));
+      // Created on first capture, not at construction: an AudioContext made
+      // before a user gesture starts suspended, and Safari will not resume it.
+      // Construction and resume are inside the try because both can reject,
+      // and toggleCapture's promise is discarded by the click handler.
+      this.audioContext ??= new AudioContext();
+      // Not `=== "suspended"`: WebKit also has a non-standard "interrupted"
+      // state after a phone call or a route change, and a context left in it
+      // accepts getUserMedia and delivers no samples at all.
+      if (this.audioContext.state !== "running") await this.audioContext.resume();
+      if (!this.source) {
+        const web = new WebAudioSource(this.audioContext);
+        web.onUnexpectedStop = () => this.handleUnexpectedStop();
+        web.onProcessingNotDisabled = (stuck) =>
+          this.controls.setStatus(
+            `Warning: this device would not disable ${stuck.join(", ")} — levels are unreliable`,
+          );
+        this.source = web;
+      }
+      source = this.source;
+      await source.start((chunk) => this.pcm?.write(chunk));
     } catch (err) {
-      this.controls.setStatus(`Microphone unavailable: ${(err as Error).message}`);
+      this.controls.setStatus(`Could not start capture: ${(err as Error).message}`);
       return;
     }
 
     // Stores are sized from the real device rate, which is only known once the
     // context exists. Rate changes between sessions rebuild them.
-    if (this.sampleRate !== this.source.sampleRate) {
-      this.sampleRate = this.source.sampleRate;
+    if (this.sampleRate !== source.sampleRate) {
+      this.sampleRate = source.sampleRate;
       this.buildStores();
     }
 
@@ -181,6 +195,15 @@ export class App {
     this.controls.setPlayEnabled(true);
     this.controls.setExportEnabled(true);
     void this.acquireWakeLock();
+  }
+
+  /** The device went away on its own; keep the UI honest about it. */
+  private handleUnexpectedStop(): void {
+    if (!this.capturing) return;
+    this.capturing = false;
+    this.controls.setCaptureState(false);
+    this.controls.setStatus("Capture stopped: the microphone became unavailable");
+    void this.releaseWakeLock();
   }
 
   private buildStores(): void {
@@ -240,7 +263,7 @@ export class App {
 
   // --- playback and export -------------------------------------------------
 
-  private togglePlay(): void {
+  private async togglePlay(): Promise<void> {
     const { player, pcm, view } = this;
     if (!player || !pcm || !view) return;
 
@@ -258,11 +281,21 @@ export class App {
       pcm.writeIndex - start,
       Math.floor(MAX_PLAYBACK_SECONDS * this.sampleRate),
     );
-    if (count <= 0) return;
+    if (count <= 0) {
+      this.controls.setStatus("Nothing to play yet");
+      return;
+    }
 
-    const samples = new Float32Array(count);
-    pcm.read(start, samples);
-    player.play(samples, this.sampleRate, start);
+    // Same reason as capture: starting a source on a non-running context
+    // produces silence and never fires onended, leaving the button stuck.
+    if (this.audioContext && this.audioContext.state !== "running") {
+      await this.audioContext.resume();
+    }
+
+    // Filled in place rather than via a scratch Float32Array: at the 300 s cap
+    // and 48 kHz each copy is 57.6 MB, and holding two at once would blow the
+    // 100 MB budget in DESIGN.md §1.2 on its own.
+    player.playInto(this.sampleRate, start, count, (channel) => pcm.read(start, channel));
     this.controls.setPlayState(true);
   }
 
@@ -271,7 +304,10 @@ export class App {
     if (!pcm) return;
     const start = pcm.earliestIndex;
     const count = pcm.writeIndex - start;
-    if (count <= 0) return;
+    if (count <= 0) {
+      this.controls.setStatus("Nothing recorded to export");
+      return;
+    }
 
     const blob = new Blob([encodeWav(pcm.readInt16(start, count), this.sampleRate)], {
       type: "audio/wav",
@@ -325,7 +361,7 @@ export class App {
       switch (e.key) {
         case " ":
           e.preventDefault();
-          this.togglePlay();
+          void this.togglePlay();
           break;
         case "Escape":
           this.player?.stop();
@@ -355,8 +391,15 @@ export class App {
     const h = this.canvas.clientHeight;
     if (w === 0 || h === 0) return;
 
-    this.canvas.width = Math.round(w * dpr);
-    this.canvas.height = Math.round(h * dpr);
+    const bw = Math.round(w * dpr);
+    const bh = Math.round(h * dpr);
+    // Assigning width/height clears the canvas even when the value is
+    // unchanged, and ResizeObserver fires after the frame's rAF callbacks — so
+    // an unconditional assignment composites a blank canvas for the whole of a
+    // window-edge drag.
+    if (this.canvas.width === bw && this.canvas.height === bh && this.cssWidth === w) return;
+    this.canvas.width = bw;
+    this.canvas.height = bh;
     // Draw in CSS pixels; the backing store carries the device ratio.
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 

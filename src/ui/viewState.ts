@@ -60,8 +60,14 @@ export class ViewState {
     return this.isFollowing;
   }
 
+  /**
+   * Integer left edge. `pinnedStart` is kept fractional underneath: rounding it
+   * on every pan would discard any movement under half a column, which at 2x
+   * and 4x zoom silently swallows slow drags entirely — 1 px pointer deltas are
+   * routine at 120 Hz and are exactly what a careful alignment gesture produces.
+   */
   get startCol(): number {
-    return this.isFollowing ? this.latest - this.visibleCols : this.pinnedStart;
+    return Math.round(this.isFollowing ? this.latest - this.visibleCols : this.pinnedStart);
   }
 
   get endCol(): number {
@@ -89,7 +95,8 @@ export class ViewState {
 
   /** Column delta applied to startCol: negative goes back in time. */
   panColumns(dc: number): void {
-    const target = this.startCol + dc;
+    const from = this.isFollowing ? this.latest - this.visibleCols : this.pinnedStart;
+    const target = from + dc;
     const maxStart = this.latest - this.visibleCols;
     if (target >= maxStart) {
       // Pushed to or past the live edge: there is nothing newer to reveal.
@@ -133,6 +140,6 @@ export class ViewState {
   private clampStart(value: number): number {
     const maxStart = this.latest - this.visibleCols;
     const minStart = Math.min(this.earliest, maxStart);
-    return Math.round(Math.min(maxStart, Math.max(minStart, value)));
+    return Math.min(maxStart, Math.max(minStart, value));
   }
 }

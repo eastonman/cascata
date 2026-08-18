@@ -34,13 +34,24 @@ export class Player {
     return this.startSample + offset;
   }
 
-  play(samples: Float32Array, sampleRate: number, startSample: number): void {
+  /**
+   * Plays `length` samples starting at absolute index `startSample`.
+   *
+   * `fill` writes straight into the AudioBuffer's channel data instead of the
+   * caller handing over a Float32Array it already built. At the 300 s cap and
+   * 48 kHz that is the difference between one 57.6 MB buffer and two.
+   */
+  playInto(
+    sampleRate: number,
+    startSample: number,
+    length: number,
+    fill: (channel: Float32Array) => void,
+  ): void {
     this.stop();
-    if (samples.length === 0) return;
+    if (length <= 0) return;
 
-    const length = samples.length;
     const buffer = this.context.createBuffer(1, length, sampleRate);
-    buffer.getChannelData(0).set(samples);
+    fill(buffer.getChannelData(0));
 
     const node = this.context.createBufferSource();
     node.buffer = buffer;

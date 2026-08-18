@@ -49,14 +49,40 @@ export class ColumnStore implements AbsoluteRing {
     return col >= this.earliestIndex && col < this.written;
   }
 
-  push(db: Int8Array, f0: number): void {
+  /**
+   * Stores a column at its absolute grid index.
+   *
+   * The index is passed in rather than inferred from an internal counter: the
+   * analyzer's cursor is the authority on which grid position a column belongs
+   * to, and the two drifting apart would silently shift the whole time axis.
+   * A forward gap is legal — the analyzer skips columns whose PCM has already
+   * been evicted — and the skipped positions are filled with the dB floor and
+   * "not computed", which is what they honestly are.
+   */
+  push(col: number, db: Int8Array, f0: number): void {
     if (db.length !== this.binCount) {
       throw new RangeError(`column must have ${this.binCount} bins, got ${db.length}`);
     }
-    const slot = ringSlot(this.written, this.capacityCols);
+    if (col < this.written) {
+      throw new RangeError(`column ${col} was already written (writeIndex ${this.written})`);
+    }
+
+    const gap = col - this.written;
+    if (gap >= this.capacityCols) {
+      this.bins.fill(-127);
+      this.f0.fill(F0_UNCOMPUTED);
+    } else {
+      for (let c = this.written; c < col; c++) {
+        const s = ringSlot(c, this.capacityCols);
+        this.bins.fill(-127, s * this.binCount, (s + 1) * this.binCount);
+        this.f0[s] = F0_UNCOMPUTED;
+      }
+    }
+
+    const slot = ringSlot(col, this.capacityCols);
     this.bins.set(db, slot * this.binCount);
     this.f0[slot] = f0;
-    this.written++;
+    this.written = col + 1;
   }
 
   readColumn(col: number, out: Int8Array): boolean {

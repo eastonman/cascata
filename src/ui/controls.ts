@@ -26,6 +26,19 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return Object.assign(document.createElement(tag), props);
 }
 
+/**
+ * Clicking a button focuses it in Chrome, and the keydown handler ignores
+ * events targeting a BUTTON — so after clicking Record, Space would re-trigger
+ * Record (stopping the recording) instead of starting playback, and the arrow
+ * keys would be dead. Blurring on click keeps the DESIGN.md §7 shortcuts alive.
+ */
+function onClick(button: HTMLButtonElement, handler: () => void): void {
+  button.addEventListener("click", () => {
+    button.blur();
+    handler();
+  });
+}
+
 function group(label: string, control: HTMLElement): HTMLDivElement {
   const wrap = el("div", { className: "group" });
   wrap.append(el("span", { textContent: label }), control);
@@ -58,11 +71,13 @@ function slider(
 ): { input: HTMLInputElement; readout: HTMLSpanElement } {
   const input = el("input", { type: "range", min: String(min), max: String(max), value: String(value) });
   const readout = el("span", { textContent: String(value) });
+  // The readout follows the thumb live, but the setting itself is committed on
+  // release. Each commit invalidates the offscreen ring and re-renders every
+  // visible column, so firing on `input` would do that ~60 times a second.
   input.addEventListener("input", () => {
-    const v = Number(input.value);
-    readout.textContent = String(v);
-    onInput(v);
+    readout.textContent = input.value;
   });
+  input.addEventListener("change", () => onInput(Number(input.value)));
   return { input, readout };
 }
 
@@ -79,16 +94,16 @@ export function createControls(
   const bar = el("div", { id: "controls" });
 
   const record = el("button", { id: "record", textContent: "Record" });
-  record.addEventListener("click", () => handlers.onToggleCapture());
+  onClick(record, () => handlers.onToggleCapture());
 
   const play = el("button", { id: "play", textContent: "Play" });
-  play.addEventListener("click", () => handlers.onTogglePlay());
+  onClick(play, () => handlers.onTogglePlay());
 
   const followBtn = el("button", { id: "follow", textContent: "Follow" });
-  followBtn.addEventListener("click", () => handlers.onFollow());
+  onClick(followBtn, () => handlers.onFollow());
 
   const exportBtn = el("button", { id: "export", textContent: "Export WAV" });
-  exportBtn.addEventListener("click", () => handlers.onExport());
+  onClick(exportBtn, () => handlers.onExport());
 
   const windowSel = select(FFT_SIZES, settings.fftSize, (v) => String(v), (v) =>
     handlers.onSettingsChange({ fftSize: v }),

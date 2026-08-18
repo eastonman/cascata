@@ -83,3 +83,32 @@ test("rejects buffers shorter than requiredSamples", () => {
   const yin = new Yin({ sampleRate: SR });
   expect(() => yin.detect(new Float32Array(10))).toThrow();
 });
+
+test("a shallow CMND dip is rejected rather than reported as pitch", () => {
+  // Loosening the threshold from 0.15 to 0.6 passes every other test here, and
+  // is the classic source of octave-down errors on real voice.
+  const yin = new Yin({ sampleRate: SR });
+  let seed = 999;
+  const rand = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x3fffffff - 1;
+  };
+  // Tone plus equal-power noise: periodic enough to dip, not enough to trust.
+  const buf = make(yin, (i) => 0.35 * Math.sin((2 * Math.PI * 220 * i) / SR) + 0.35 * rand());
+  const strict = yin.detect(buf);
+  const loose = new Yin({ sampleRate: SR, threshold: 0.6 }).detect(buf);
+  expect(loose).toBeGreaterThan(0);
+  expect(strict).toBe(0);
+});
+
+test("the silence gate looks at the analysis window, not the lag region", () => {
+  // Computing RMS over the whole buffer would let energy in the lag region
+  // un-gate a window that is actually silent, which is what happens at note
+  // onsets and offsets.
+  const yin = new Yin({ sampleRate: SR });
+  const buf = new Float32Array(yin.requiredSamples);
+  for (let i = yin.windowSize; i < buf.length; i++) {
+    buf[i] = 0.5 * Math.sin((2 * Math.PI * 220 * i) / SR);
+  }
+  expect(yin.detect(buf)).toBe(0);
+});

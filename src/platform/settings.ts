@@ -62,7 +62,27 @@ function clamped(value: unknown, min: number, max: number, fallback: number): nu
  * settings blob that fails to parse is not worth surfacing to the user — the
  * defaults are all usable.
  */
-export function loadSettings(storage: Storage = localStorage): Settings {
+/**
+ * Resolves the backing store without letting a hostile environment escape.
+ *
+ * Reading the bare `localStorage` identifier — not just calling it — throws
+ * SecurityError in Safari with site data blocked, and in some embedded
+ * WebViews. It therefore cannot be a default parameter value: those are
+ * evaluated before the function body, outside any try/catch inside it. Getting
+ * this wrong takes down the whole app, because App's constructor loads
+ * settings before anything is on screen.
+ */
+function defaultStorage(): Storage | null {
+  try {
+    return localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function loadSettings(storage: Storage | null = defaultStorage()): Settings {
+  if (!storage) return { ...DEFAULT_SETTINGS };
+
   let raw: string | null = null;
   try {
     raw = storage.getItem(SETTINGS_KEY);
@@ -93,9 +113,12 @@ export function loadSettings(storage: Storage = localStorage): Settings {
   };
 }
 
-export function saveSettings(settings: Settings, storage: Storage = localStorage): void {
+export function saveSettings(
+  settings: Settings,
+  storage: Storage | null = defaultStorage(),
+): void {
   try {
-    storage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    storage?.setItem(SETTINGS_KEY, JSON.stringify(settings));
   } catch {
     // Private browsing or a full quota. Settings are a convenience, not data:
     // losing them costs the user a few clicks, so failing silently is right.

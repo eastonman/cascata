@@ -92,3 +92,57 @@ test("apply rejects wrongly sized buffers", () => {
   expect(() => map.apply(new Float32Array(10), new Int8Array(600))).toThrow();
   expect(() => map.apply(new Float32Array(1025), new Int8Array(4))).toThrow();
 });
+
+test("log bins above Nyquist read as empty, not as the Nyquist bin", () => {
+  // Reachable in practice: a Bluetooth headset mic on macOS drops the
+  // AudioContext to 16 kHz, well under the 12 kHz display ceiling. Left
+  // unhandled these bins all collapse onto the last FFT bin and paint a solid
+  // stripe across the top of a spectrogram that should read empty.
+  const sr = 16000;
+  const fftSize = 4096;
+  const spec = new Spectrum(fftSize);
+  const map = new LogBinMap(fftSize, sr);
+  const mag = new Float32Array(spec.binCount);
+  const out = new Int8Array(600);
+
+  const frame = new Float32Array(fftSize);
+  for (let i = 0; i < fftSize; i++) frame[i] = Math.sin((2 * Math.PI * 7900 * i) / sr);
+  spec.compute(frame, mag);
+  map.apply(mag, out);
+
+  const nyquistBin = Math.ceil(map.freqToBin(sr / 2));
+  for (let i = nyquistBin + 1; i < 600; i++) {
+    expect(out[i]).toBe(-127);
+  }
+  // The tone itself, just below Nyquist, is still visible.
+  expect(out[Math.round(map.freqToBin(7900))]).toBeGreaterThan(-20);
+});
+
+test("log bin edges partition the FFT grid without gaps or overlap", () => {
+  // Widening the edges (halfStep = ratio instead of sqrt(ratio)) makes adjacent
+  // bins overlap 2x and every other assertion in this file still passes.
+  const sr = 48000;
+  const fftSize = 4096;
+  const map = new LogBinMap(fftSize, sr);
+  const claims = new Map<number, number>();
+
+  const mag = new Float32Array(fftSize / 2 + 1).fill(-100);
+  const out = new Int8Array(600);
+  for (let k = 0; k < mag.length; k++) {
+    const freq = (k * sr) / fftSize;
+    if (freq < 55 || freq > 12000) continue;
+    mag.fill(-100);
+    mag[k] = 0;
+    map.apply(mag, out);
+    let owners = 0;
+    for (let i = 0; i < 600; i++) if (out[i] === 0) owners++;
+    claims.set(k, owners);
+  }
+
+  // Every FFT bin inside the stored range is claimed by exactly one log bin as
+  // its maximum. (Neighbouring log bins may interpolate toward it, but only one
+  // reports the peak value itself.)
+  for (const [k, owners] of claims) {
+    expect(`bin ${k}: ${owners} owners`).toBe(`bin ${k}: 1 owners`);
+  }
+});

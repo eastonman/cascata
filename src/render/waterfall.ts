@@ -31,7 +31,9 @@ export class WaterfallRenderer {
 
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
-  private readonly columnData: ImageData;
+  /** Scratch for a run of columns. 256 wide keeps it under 1 MB at 600 bins. */
+  private readonly batchWidth = 256;
+  private readonly batch: ImageData;
 
   private lut: Uint8ClampedArray;
   private floorDb = DEFAULT_DB_FLOOR;
@@ -52,7 +54,7 @@ export class WaterfallRenderer {
     if (!ctx) throw new Error("2D canvas context unavailable");
     this.canvas = canvas;
     this.ctx = ctx;
-    this.columnData = ctx.createImageData(1, binCount);
+    this.batch = ctx.createImageData(this.batchWidth, binCount);
   }
 
   /**
@@ -96,17 +98,44 @@ export class WaterfallRenderer {
     this.slotCol.fill(-1);
   }
 
-  /** Renders any column in [startCol, endCol) whose slot holds something else. */
+  /**
+   * Renders any column in [startCol, endCol) whose slot holds something else.
+   *
+   * Consecutive dirty slots are written with one putImageData per run rather
+   * than one per column. In the steady state that is a single column either
+   * way, but after an invalidate (colormap, dB range, zoom) every visible
+   * column is dirty at once — 3200 of them at 0.5x zoom on a wide window — and
+   * the per-call overhead is what turns that frame into a visible stutter.
+   */
   sync(store: ColumnStore, startCol: number, endCol: number): void {
     if (this.slots === 0) return;
     const { first, to } = this.range(startCol, endCol);
 
+    let runStart = -1;
+    const flush = (endExclusive: number) => {
+      if (runStart >= 0) {
+        this.ctx.putImageData(this.batch, ringSlot(runStart, this.slots), 0, 0, 0, endExclusive - runStart, this.binCount);
+        runStart = -1;
+      }
+    };
+
     for (let col = first; col < to; col++) {
       const slot = ringSlot(col, this.slots);
-      if (this.slotCol[slot] === col) continue;
-      this.renderColumn(store, col, slot);
-      this.slotCol[slot] = col;
+      if (this.slotCol[slot] === col) {
+        flush(col);
+        continue;
+      }
+      // A run cannot straddle the ring wrap, and the scratch buffer is bounded.
+      if (runStart >= 0 && (slot === 0 || col - runStart >= this.batchWidth)) flush(col);
+      if (runStart < 0) runStart = col;
+
+      // A column the store does not have yet is drawn at the floor but NOT
+      // cached, so the next frame retries. Caching it would freeze a screenful
+      // of black in place until the ring wrapped past it.
+      const ok = this.paintInto(store, col, col - runStart);
+      this.slotCol[slot] = ok ? col : -1;
     }
+    flush(to);
   }
 
   /**
@@ -160,35 +189,40 @@ export class WaterfallRenderer {
     }
   }
 
-  private renderColumn(store: ColumnStore, col: number, slot: number): void {
-    const pixels = this.columnData.data;
+  /**
+   * Paints one column into scratch column `at`. Returns whether the store
+   * actually had the data; a false result must not be cached.
+   */
+  private paintInto(store: ColumnStore, col: number, at: number): boolean {
+    const pixels = this.batch.data;
+    const stride = this.batchWidth * 4;
     const view = store.columnView(col);
     const lut = this.lut;
 
     if (!view) {
       // Missing column: paint the colormap's floor rather than leaving stale data.
       for (let r = 0; r < this.binCount; r++) {
-        const p = r * 4;
+        const p = r * stride + at * 4;
         pixels[p] = lut[0];
         pixels[p + 1] = lut[1];
         pixels[p + 2] = lut[2];
         pixels[p + 3] = 255;
       }
-    } else {
-      const inv = 255 / this.rangeDb;
-      for (let bin = 0; bin < this.binCount; bin++) {
-        let idx = Math.round((view[bin] - this.floorDb) * inv);
-        if (idx < 0) idx = 0;
-        else if (idx > 255) idx = 255;
-        const s = idx * 4;
-        const p = (this.binCount - 1 - bin) * 4;
-        pixels[p] = lut[s];
-        pixels[p + 1] = lut[s + 1];
-        pixels[p + 2] = lut[s + 2];
-        pixels[p + 3] = 255;
-      }
+      return false;
     }
 
-    this.ctx.putImageData(this.columnData, slot, 0);
+    const inv = 255 / this.rangeDb;
+    for (let bin = 0; bin < this.binCount; bin++) {
+      let idx = Math.round((view[bin] - this.floorDb) * inv);
+      if (idx < 0) idx = 0;
+      else if (idx > 255) idx = 255;
+      const s = idx * 4;
+      const p = (this.binCount - 1 - bin) * stride + at * 4;
+      pixels[p] = lut[s];
+      pixels[p + 1] = lut[s + 1];
+      pixels[p + 2] = lut[s + 2];
+      pixels[p + 3] = 255;
+    }
+    return true;
   }
 }

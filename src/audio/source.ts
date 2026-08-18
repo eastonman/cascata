@@ -21,6 +21,18 @@ export type SampleSink = (chunk: Float32Array) => void;
 export interface AudioSource {
   readonly sampleRate: number;
   readonly running: boolean;
+  /**
+   * Fired when capture ends for a reason the caller did not ask for — the
+   * device was unplugged, or another application took it. The caller must
+   * update its own state; `running` is already false by this point.
+   */
+  onUnexpectedStop?: () => void;
+  /**
+   * Fired when the platform accepted the capture constraints but did not
+   * actually disable the named processors. AGC in particular makes intensity
+   * readings untrustworthy (DESIGN.md §5.3), so this must reach the user.
+   */
+  onProcessingNotDisabled?: (stuck: readonly string[]) => void;
   start(onSamples: SampleSink): Promise<void>;
   stop(): Promise<void>;
 }

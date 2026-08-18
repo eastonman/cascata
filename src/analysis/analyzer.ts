@@ -81,8 +81,15 @@ export class Analyzer {
     this.pitch = on;
   }
 
+  /**
+   * Rewinds to the start of the grid. The column store is cleared with it —
+   * the cursor is the authority on which grid position a column occupies, so
+   * moving one without the other would leave stored columns claiming times
+   * they were never computed from.
+   */
   reset(): void {
     this.cursorCol = 0;
+    this.columns.clear();
   }
 
   /**
@@ -95,6 +102,22 @@ export class Analyzer {
     // YIN reads from -windowSize/2 forward across the longest period searched.
     const yinLead = this.yin.windowSize / 2 + this.yin.tauMax;
     const lookahead = Math.max(halfWindow, yinLead);
+
+    // Skip forward over any span whose PCM has already been overwritten.
+    // Without this, a tab hidden for ten minutes (rAF pauses, but the capture
+    // worklet keeps writing) leaves the cursor minutes behind the ring: on
+    // return the analyzer would grind through tens of thousands of columns
+    // computed from zero-filled evicted samples, all but the last 22500 of
+    // which get evicted from ColumnStore before they can ever be drawn. Worse,
+    // those columns would record f0 = 0, which means "analysed and silent" —
+    // confident silence over audio that was never read.
+    // Only once eviction has actually begun. While earliestIndex is 0 nothing
+    // has been overwritten, so zero-padding before sample 0 is honest — there
+    // was never any audio there.
+    if (this.pcm.earliestIndex > 0) {
+      const oldestReadable = Math.ceil((this.pcm.earliestIndex + halfWindow) / HOP);
+      if (this.cursorCol < oldestReadable) this.cursorCol = oldestReadable;
+    }
 
     let produced = 0;
     while (produced < maxColumns) {
@@ -111,7 +134,7 @@ export class Analyzer {
         f0 = this.yin.detect(this.yinFrame);
       }
 
-      this.columns.push(this.outColumn, f0);
+      this.columns.push(this.cursorCol, this.outColumn, f0);
       this.cursorCol++;
       produced++;
     }

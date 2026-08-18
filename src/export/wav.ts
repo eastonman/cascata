@@ -33,9 +33,10 @@ export function encodeWav(pcm: Int16Array, sampleRate: number): ArrayBuffer {
   writeAscii(view, 36, "data");
   view.setUint32(40, dataBytes, true);
 
-  for (let i = 0; i < pcm.length; i++) {
-    view.setInt16(HEADER_BYTES + i * 2, pcm[i], true);
-  }
+  // Bulk copy rather than 23 million DataView.setInt16 calls on a full
+  // 8-minute buffer, which visibly freezes the main thread. Every platform
+  // this targets is little-endian, and the header tests assert the byte order.
+  new Int16Array(buffer, HEADER_BYTES).set(pcm);
 
   return buffer;
 }

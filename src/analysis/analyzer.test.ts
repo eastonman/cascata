@@ -144,3 +144,71 @@ test("setFftSize rejects unsupported sizes", () => {
   // @ts-expect-error deliberately passing an unsupported size
   expect(() => analyzer.setFftSize(1024)).toThrow();
 });
+
+test("an impulse at sample K*HOP peaks at exactly column K", () => {
+  // Pins the absolute window centring, which no relative test can: shifting the
+  // whole grid by half a window (left-aligning the STFT frame) puts the entire
+  // spectrogram 42.7 ms out of step with the audio and the time axis, and every
+  // other test in this file still passes.
+  const { pcm, columns, analyzer } = setup();
+  const K = 30;
+  const buf = new Float32Array(SR);
+  buf[K * HOP] = 1;
+  pcm.write(buf);
+  analyzer.pump(100000);
+
+  const out = new Int8Array(BIN_COUNT);
+  let bestCol = -1;
+  let bestLevel = -Infinity;
+  for (let c = 0; c < analyzer.cursor; c++) {
+    if (!columns.readColumn(c, out)) continue;
+    let peak = -128;
+    for (const v of out) if (v > peak) peak = v;
+    if (peak > bestLevel) {
+      bestLevel = peak;
+      bestCol = c;
+    }
+  }
+  expect(bestCol).toBe(K);
+});
+
+test("the YIN frame is centred too, not left-aligned", () => {
+  // A tone confined to [K*HOP - YIN_WINDOW/2, K*HOP + YIN_WINDOW/2) is only
+  // detectable at column K if the YIN frame is centred on K*HOP.
+  const { pcm, analyzer, columns } = setup();
+  analyzer.setPitchEnabled(true);
+  const K = 40;
+  const half = 512;
+  const buf = new Float32Array(SR);
+  for (let i = K * HOP - half; i < K * HOP + half; i++) {
+    buf[i] = 0.5 * Math.sin((2 * Math.PI * 220 * i) / SR);
+  }
+  pcm.write(buf);
+  analyzer.pump(100000);
+  expect(Math.abs(columns.getF0(K) - 220)).toBeLessThan(5);
+});
+
+test("the cursor skips forward past PCM that was already evicted", () => {
+  // A hidden tab pauses rAF while the capture worklet keeps writing. On return
+  // the analyzer must not grind through columns whose samples are long gone.
+  const pcm = new PcmRing(SR); // 1 s ring
+  const columns = new ColumnStore(Math.ceil(SR / HOP), BIN_COUNT);
+  const analyzer = new Analyzer({ sampleRate: SR, pcm, columns });
+
+  pcm.write(tone(SR * 5, 440)); // 5 s written into a 1 s ring
+  expect(pcm.earliestIndex).toBe(SR * 4);
+
+  const produced = analyzer.pump(100000);
+  expect(analyzer.cursor).toBeGreaterThan((SR * 4) / HOP);
+  expect(produced).toBeLessThan(Math.ceil(SR / HOP) + 2);
+
+  // Everything it actually analysed came from PCM that was present. Columns
+  // before that are the gap fill for the skipped span and read as empty.
+  const out = new Int8Array(BIN_COUNT);
+  for (let c = columns.writeIndex - produced; c < columns.writeIndex; c++) {
+    expect(columns.readColumn(c, out)).toBe(true);
+    let peak = -128;
+    for (const v of out) if (v > peak) peak = v;
+    expect(peak).toBeGreaterThan(-60);
+  }
+});
