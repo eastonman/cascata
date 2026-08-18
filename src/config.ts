@@ -61,5 +61,13 @@ export const YIN_FMAX = 1200;
 export const YIN_THRESHOLD = 0.15;
 export const YIN_SILENCE_DB = -55;
 
-/** Playback is capped so a long scrollback cannot start an unstoppable 8-minute play. */
-export const MAX_PLAYBACK_SECONDS = 300;
+/**
+ * Playback cap, seconds.
+ *
+ * Bounds both how long an uncued Play can run and how much PCM is copied into
+ * an AudioBuffer. At 48 kHz Float32 that buffer is 0.192 MB/s, so 120 s costs
+ * 23 MB — which keeps the 59.7 MB of stores plus the canvases inside the
+ * 100 MB budget in DESIGN.md §1.2. The original 300 s would have cost 57.6 MB
+ * and broken that budget on the default Play action.
+ */
+export const MAX_PLAYBACK_SECONDS = 120;

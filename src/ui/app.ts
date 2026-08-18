@@ -292,7 +292,7 @@ export class App {
       await this.audioContext.resume();
     }
 
-    // Filled in place rather than via a scratch Float32Array: at the 300 s cap
+    // Filled in place rather than via a scratch Float32Array: at the cap
     // and 48 kHz each copy is 57.6 MB, and holding two at once would blow the
     // 100 MB budget in DESIGN.md §1.2 on its own.
     player.playInto(this.sampleRate, start, count, (channel) => pcm.read(start, channel));

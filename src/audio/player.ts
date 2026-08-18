@@ -38,8 +38,8 @@ export class Player {
    * Plays `length` samples starting at absolute index `startSample`.
    *
    * `fill` writes straight into the AudioBuffer's channel data instead of the
-   * caller handing over a Float32Array it already built. At the 300 s cap and
-   * 48 kHz that is the difference between one 57.6 MB buffer and two.
+   * caller handing over a Float32Array it already built. At the playback cap
+   * that is the difference between one 23 MB buffer and two.
    */
   playInto(
     sampleRate: number,
