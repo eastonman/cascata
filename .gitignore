@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.direnv/
+result
+.DS_Store
+
+# Design and planning docs are intentionally untracked
+DESIGN.md
+docs/superpowers/
