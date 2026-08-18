@@ -36,6 +36,11 @@ export class WebAudioSource implements AudioSource {
     return this.active;
   }
 
+  /** The live AudioContext, once start() has created it. Shared with playback. */
+  get audioContext(): AudioContext | null {
+    return this.context;
+  }
+
   /** The context is created on first start and kept for playback reuse. */
   async ensureContext(): Promise<AudioContext> {
     if (!this.context) this.context = new AudioContext();

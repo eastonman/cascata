@@ -1,0 +1,174 @@
+:root {
+  --bg: #0b0d12;
+  --panel: #151922;
+  --border: #262c3a;
+  --text: #dfe4ee;
+  --muted: #8d97ab;
+  --accent: #4aa3ff;
+  --danger: #ff5f56;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+  overscroll-behavior: none;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+#controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+#controls .group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+#controls .group > span {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+#controls .spacer {
+  flex: 1;
+}
+
+#status {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+button,
+select,
+input[type="range"] {
+  font: inherit;
+  color: var(--text);
+  background: #1d2330;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: #3a4356;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button[data-active="true"] {
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button#record[data-active="true"] {
+  border-color: var(--danger);
+  color: #fff;
+}
+
+input[type="range"] {
+  padding: 0;
+  width: 96px;
+  min-height: 24px;
+  background: transparent;
+  border: none;
+}
+
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+#stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+#waterfall {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* Pointer Events handle pan and tap; suppress native scroll/zoom gestures. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: crosshair;
+}
+
+#hint {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  pointer-events: none;
+  text-align: center;
+  padding: 20px;
+}
+
+#hint[hidden] {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  #controls {
+    gap: 6px 8px;
+    padding: 6px 8px;
+  }
+
+  #controls .spacer {
+    flex-basis: 100%;
+  }
+
+  /* 44px keeps every control inside a comfortable touch target. */
+  button,
+  select {
+    min-height: 44px;
+  }
+
+  input[type="range"] {
+    width: 76px;
+    min-height: 44px;
+  }
+
+  #status {
+    flex-basis: 100%;
+  }
+}
