@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes the in-flight run pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The flake is the source of truth for the toolchain, so CI resolves bun
+      # and node through it rather than pinning versions a second time here.
+      - uses: DeterminateSystems/nix-installer-action@v20
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+
+      - name: Show toolchain
+        run: nix develop --command bash -c 'bun --version && node --version'
+
+      # --frozen-lockfile: CI must fail on an out-of-date lockfile rather than
+      # silently resolving something different from what was committed.
+      - name: Install dependencies
+        run: nix develop --command bun install --frozen-lockfile
+
+      - name: Format and lint
+        run: nix develop --command bun run check
+
+      - name: Typecheck
+        run: nix develop --command bun run typecheck
+
+      - name: Test
+        run: nix develop --command bun test
+
+      - name: Build
+        run: nix develop --command bun run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
