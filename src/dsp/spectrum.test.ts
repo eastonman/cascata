@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { FFT } from "./fft";
-import { hann, windowSum } from "./window";
 import { Spectrum } from "./spectrum";
+import { hann, windowSum } from "./window";
 
 const SR = 48000;
 

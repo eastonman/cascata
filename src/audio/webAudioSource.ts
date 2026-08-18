@@ -1,4 +1,4 @@
-import { CAPTURE_CONSTRAINTS, type AudioSource, type SampleSink } from "./source";
+import { type AudioSource, CAPTURE_CONSTRAINTS, type SampleSink } from "./source";
 
 const SCRIPT_PROCESSOR_BUFFER = 1024;
 
@@ -148,8 +148,7 @@ export class WebAudioSource implements AudioSource {
     this.sink?.disconnect();
     this.sink = null;
 
-    this.stream?.getTracks().forEach((t) => t.stop());
+    for (const track of this.stream?.getTracks() ?? []) track.stop();
     this.stream = null;
   }
-
 }

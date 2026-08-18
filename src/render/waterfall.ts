@@ -114,7 +114,15 @@ export class WaterfallRenderer {
     let runStart = -1;
     const flush = (endExclusive: number) => {
       if (runStart >= 0) {
-        this.ctx.putImageData(this.batch, ringSlot(runStart, this.slots), 0, 0, 0, endExclusive - runStart, this.binCount);
+        this.ctx.putImageData(
+          this.batch,
+          ringSlot(runStart, this.slots),
+          0,
+          0,
+          0,
+          endExclusive - runStart,
+          this.binCount,
+        );
         runStart = -1;
       }
     };

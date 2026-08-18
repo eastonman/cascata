@@ -1,22 +1,22 @@
 import {
   A4_OPTIONS,
   COLORMAP_NAMES,
-  DEFAULT_COLORMAP,
+  type ColormapName,
   DB_FLOOR_MAX,
   DB_FLOOR_MIN,
   DB_RANGE_MAX,
   DB_RANGE_MIN,
   DEFAULT_A4,
+  DEFAULT_COLORMAP,
   DEFAULT_DB_FLOOR,
   DEFAULT_DB_RANGE,
   DEFAULT_FFT_SIZE,
   DEFAULT_FREQ_LIMIT,
   DEFAULT_TIME_ZOOM,
   FFT_SIZES,
+  type FftSize,
   FREQ_LIMITS,
   TIME_ZOOMS,
-  type ColormapName,
-  type FftSize,
 } from "../config";
 
 export const SETTINGS_KEY = "cascata.settings.v1";
@@ -113,10 +113,7 @@ export function loadSettings(storage: Storage | null = defaultStorage()): Settin
   };
 }
 
-export function saveSettings(
-  settings: Settings,
-  storage: Storage | null = defaultStorage(),
-): void {
+export function saveSettings(settings: Settings, storage: Storage | null = defaultStorage()): void {
   try {
     storage?.setItem(SETTINGS_KEY, JSON.stringify(settings));
   } catch {

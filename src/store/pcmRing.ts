@@ -1,4 +1,4 @@
-import { ringSlot, type AbsoluteRing } from "./ring";
+import { type AbsoluteRing, ringSlot } from "./ring";
 
 /**
  * Int16 PCM ring buffer — the single source of truth for recorded audio

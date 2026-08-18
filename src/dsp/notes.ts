@@ -6,7 +6,7 @@ export function freqToMidi(freq: number, a4: number): number {
 }
 
 export function midiToFreq(midi: number, a4: number): number {
-  return a4 * Math.pow(2, (midi - 69) / 12);
+  return a4 * 2 ** ((midi - 69) / 12);
 }
 
 /** Scientific pitch notation, e.g. 69 -> "A4". */

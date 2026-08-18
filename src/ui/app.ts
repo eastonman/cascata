@@ -1,19 +1,12 @@
-import {
-  BIN_COUNT,
-  F_MAX,
-  F_MIN,
-  HOP,
-  MAX_PLAYBACK_SECONDS,
-  RECORD_SECONDS,
-} from "../config";
 import { Analyzer } from "../analysis/analyzer";
 import { Player } from "../audio/player";
 import type { AudioSource } from "../audio/source";
 import { WebAudioSource } from "../audio/webAudioSource";
+import { BIN_COUNT, F_MAX, F_MIN, HOP, MAX_PLAYBACK_SECONDS, RECORD_SECONDS } from "../config";
 import { freqToBin } from "../dsp/logBins";
 import { encodeWav } from "../export/wav";
 import { saveBlob } from "../platform/files";
-import { loadSettings, saveSettings, type Settings } from "../platform/settings";
+import { loadSettings, type Settings, saveSettings } from "../platform/settings";
 import {
   drawCrosshair,
   drawNoteRuler,
@@ -23,14 +16,14 @@ import {
   drawTimeAxis,
   formatClock,
   formatReadout,
+  type OverlayGeometry,
   yToBin,
   yToFreq,
-  type OverlayGeometry,
 } from "../render/overlay";
 import { WaterfallRenderer } from "../render/waterfall";
 import { ColumnStore } from "../store/columnStore";
 import { PcmRing } from "../store/pcmRing";
-import { createControls, type ControlsHandle } from "./controls";
+import { type ControlsHandle, createControls } from "./controls";
 import { ViewState } from "./viewState";
 
 /** Pointer movement past this is a drag, below it a tap that sets the cursor. */

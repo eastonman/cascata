@@ -24,11 +24,11 @@ test("describeFreq reports nearest note and signed cents", () => {
   expect(exact.name).toBe("A4");
   expect(exact.cents).toBeCloseTo(0, 6);
 
-  const sharp = describeFreq(440 * Math.pow(2, 25 / 1200), 440)!;
+  const sharp = describeFreq(440 * 2 ** (25 / 1200), 440)!;
   expect(sharp.name).toBe("A4");
   expect(sharp.cents).toBeCloseTo(25, 4);
 
-  const flat = describeFreq(440 * Math.pow(2, -25 / 1200), 440)!;
+  const flat = describeFreq(440 * 2 ** (-25 / 1200), 440)!;
   expect(flat.name).toBe("A4");
   expect(flat.cents).toBeCloseTo(-25, 4);
 });

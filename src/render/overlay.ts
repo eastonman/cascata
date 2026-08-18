@@ -1,6 +1,6 @@
 import { binToFreq, freqToBin } from "../dsp/logBins";
 import { describeFreq, midiToFreq, noteName } from "../dsp/notes";
-import { ColumnStore, F0_SILENT, F0_UNCOMPUTED } from "../store/columnStore";
+import { type ColumnStore, F0_SILENT, F0_UNCOMPUTED } from "../store/columnStore";
 
 /** The part of the geometry that frequency-axis maths needs. */
 export interface FreqAxis {
@@ -128,7 +128,7 @@ export function drawTimeAxis(ctx: CanvasRenderingContext2D, g: OverlayGeometry):
   const pxPerSecond = colsPerSecond * g.pxPerCol;
   const step = TICK_STEPS_SEC.find((s) => s * pxPerSecond >= MIN_TICK_SPACING_PX) ?? 60;
 
-  const startSec = (g.startCol / colsPerSecond);
+  const startSec = g.startCol / colsPerSecond;
   const endSec = startSec + g.w / pxPerSecond;
 
   ctx.save();
@@ -209,7 +209,11 @@ function verticalLine(
 }
 
 /** Dashed: where playback would start. */
-export function drawPlayCursor(ctx: CanvasRenderingContext2D, g: OverlayGeometry, col: number): void {
+export function drawPlayCursor(
+  ctx: CanvasRenderingContext2D,
+  g: OverlayGeometry,
+  col: number,
+): void {
   verticalLine(ctx, g, col, CURSOR_COLOR, [4, 4]);
 }
 

@@ -1,6 +1,15 @@
-import { A4_OPTIONS, DB_FLOOR_MAX, DB_FLOOR_MIN, DB_RANGE_MAX, DB_RANGE_MIN, FFT_SIZES, FREQ_LIMITS, TIME_ZOOMS } from "../config";
-import { COLORMAP_NAMES } from "../render/colormap";
+import {
+  A4_OPTIONS,
+  DB_FLOOR_MAX,
+  DB_FLOOR_MIN,
+  DB_RANGE_MAX,
+  DB_RANGE_MIN,
+  FFT_SIZES,
+  FREQ_LIMITS,
+  TIME_ZOOMS,
+} from "../config";
 import type { Settings } from "../platform/settings";
+import { COLORMAP_NAMES } from "../render/colormap";
 
 export interface ControlHandlers {
   onToggleCapture(): void;
@@ -53,7 +62,9 @@ function select<T extends string | number>(
 ): HTMLSelectElement {
   const s = el("select");
   for (const opt of options) {
-    s.append(el("option", { value: String(opt), textContent: format(opt), selected: opt === current }));
+    s.append(
+      el("option", { value: String(opt), textContent: format(opt), selected: opt === current }),
+    );
   }
   s.addEventListener("change", () => {
     const raw = s.value;
@@ -69,7 +80,12 @@ function slider(
   value: number,
   onInput: (v: number) => void,
 ): { input: HTMLInputElement; readout: HTMLSpanElement } {
-  const input = el("input", { type: "range", min: String(min), max: String(max), value: String(value) });
+  const input = el("input", {
+    type: "range",
+    min: String(min),
+    max: String(max),
+    value: String(value),
+  });
   const readout = el("span", { textContent: String(value) });
   // The readout follows the thumb live, but the setting itself is committed on
   // release. Each commit invalidates the offscreen ring and re-renders every
@@ -105,20 +121,35 @@ export function createControls(
   const exportBtn = el("button", { id: "export", textContent: "Export WAV" });
   onClick(exportBtn, () => handlers.onExport());
 
-  const windowSel = select(FFT_SIZES, settings.fftSize, (v) => String(v), (v) =>
-    handlers.onSettingsChange({ fftSize: v }),
+  const windowSel = select(
+    FFT_SIZES,
+    settings.fftSize,
+    (v) => String(v),
+    (v) => handlers.onSettingsChange({ fftSize: v }),
   );
-  const freqSel = select(FREQ_LIMITS, settings.freqLimit, (v) => `${v / 1000} kHz`, (v) =>
-    handlers.onSettingsChange({ freqLimit: v }),
+  const freqSel = select(
+    FREQ_LIMITS,
+    settings.freqLimit,
+    (v) => `${v / 1000} kHz`,
+    (v) => handlers.onSettingsChange({ freqLimit: v }),
   );
-  const colorSel = select(COLORMAP_NAMES, settings.colormap, (v) => v, (v) =>
-    handlers.onSettingsChange({ colormap: v }),
+  const colorSel = select(
+    COLORMAP_NAMES,
+    settings.colormap,
+    (v) => v,
+    (v) => handlers.onSettingsChange({ colormap: v }),
   );
-  const zoomSel = select(TIME_ZOOMS, settings.timeZoom, (v) => `${v}x`, (v) =>
-    handlers.onSettingsChange({ timeZoom: v }),
+  const zoomSel = select(
+    TIME_ZOOMS,
+    settings.timeZoom,
+    (v) => `${v}x`,
+    (v) => handlers.onSettingsChange({ timeZoom: v }),
   );
-  const a4Sel = select(A4_OPTIONS, settings.a4, (v) => `${v} Hz`, (v) =>
-    handlers.onSettingsChange({ a4: v }),
+  const a4Sel = select(
+    A4_OPTIONS,
+    settings.a4,
+    (v) => `${v} Hz`,
+    (v) => handlers.onSettingsChange({ a4: v }),
   );
 
   const floor = slider(DB_FLOOR_MIN, DB_FLOOR_MAX, settings.dbFloor, (v) =>
@@ -129,7 +160,9 @@ export function createControls(
   );
 
   const pitch = el("input", { type: "checkbox", checked: settings.pitchEnabled });
-  pitch.addEventListener("change", () => handlers.onSettingsChange({ pitchEnabled: pitch.checked }));
+  pitch.addEventListener("change", () =>
+    handlers.onSettingsChange({ pitchEnabled: pitch.checked }),
+  );
   const pitchLabel = el("label", { className: "check" });
   pitchLabel.append(pitch, el("span", { textContent: "Pitch" }));
 

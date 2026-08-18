@@ -12,7 +12,10 @@ export { COLORMAP_NAMES, type ColormapName };
  * a decorative one. Storing stops instead of the full 256x3 table keeps this
  * file legible at negligible visual cost.
  */
-const STOPS: Record<Exclude<ColormapName, "gray">, ReadonlyArray<readonly [number, number, number]>> = {
+const STOPS: Record<
+  Exclude<ColormapName, "gray">,
+  ReadonlyArray<readonly [number, number, number]>
+> = {
   magma: [
     [0, 0, 4],
     [8, 7, 30],

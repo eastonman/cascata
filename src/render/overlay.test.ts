@@ -55,8 +55,9 @@ test("yToBin agrees with converting through frequency and back", () => {
   const cropped = { ...GEO, maxBin: 400 };
   for (const g of [GEO, cropped]) {
     for (const y of [0, 150, 300, 599]) {
-      const viaFreq = ((Math.log(yToFreq(y, g)) - Math.log(g.fMin)) /
-        (Math.log(g.fMax) - Math.log(g.fMin))) * (g.binCount - 1);
+      const viaFreq =
+        ((Math.log(yToFreq(y, g)) - Math.log(g.fMin)) / (Math.log(g.fMax) - Math.log(g.fMin))) *
+        (g.binCount - 1);
       expect(yToBin(y, g)).toBeCloseTo(viaFreq, 6);
     }
   }

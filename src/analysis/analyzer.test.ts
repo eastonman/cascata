@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { Analyzer } from "./analyzer";
-import { PcmRing } from "../store/pcmRing";
-import { ColumnStore } from "../store/columnStore";
-import { LogBinMap } from "../dsp/logBins";
 import { BIN_COUNT, HOP } from "../config";
+import { LogBinMap } from "../dsp/logBins";
+import { ColumnStore } from "../store/columnStore";
+import { PcmRing } from "../store/pcmRing";
+import { Analyzer } from "./analyzer";
 
 const SR = 48000;
 
@@ -48,7 +48,8 @@ test("column content locates the tone at the right log bin", () => {
   for (let i = 1; i < out.length; i++) if (out[i] > out[peak]) peak = i;
   // Within one FFT bin or one log bin, whichever is coarser at 440 Hz.
   const fftBinHz = SR / analyzer.fftSize;
-  const logBinHz = map.binToFreq(map.freqToBin(440) + 0.5) - map.binToFreq(map.freqToBin(440) - 0.5);
+  const logBinHz =
+    map.binToFreq(map.freqToBin(440) + 0.5) - map.binToFreq(map.freqToBin(440) - 0.5);
   expect(Math.abs(map.binToFreq(peak) - 440)).toBeLessThan(Math.max(fftBinHz, logBinHz));
 });
 

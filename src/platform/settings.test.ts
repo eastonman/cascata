@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { DEFAULT_SETTINGS, loadSettings, saveSettings, SETTINGS_KEY } from "./settings";
+import { DEFAULT_SETTINGS, loadSettings, SETTINGS_KEY, saveSettings } from "./settings";
 
 function memoryStorage(seed: Record<string, string> = {}): Storage {
   const map = new Map(Object.entries(seed));

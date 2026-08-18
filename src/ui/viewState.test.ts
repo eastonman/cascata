@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { ViewState } from "./viewState";
 import { HOP } from "../config";
+import { ViewState } from "./viewState";
 
 const SR = 48000;
 

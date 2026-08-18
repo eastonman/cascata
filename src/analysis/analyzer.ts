@@ -1,9 +1,9 @@
-import { BIN_COUNT, DEFAULT_FFT_SIZE, FFT_SIZES, HOP, type FftSize } from "../config";
+import { BIN_COUNT, DEFAULT_FFT_SIZE, FFT_SIZES, type FftSize, HOP } from "../config";
 import { LogBinMap } from "../dsp/logBins";
 import { Spectrum } from "../dsp/spectrum";
 import { Yin } from "../dsp/yin";
-import { ColumnStore, F0_UNCOMPUTED } from "../store/columnStore";
-import { PcmRing } from "../store/pcmRing";
+import { type ColumnStore, F0_UNCOMPUTED } from "../store/columnStore";
+import type { PcmRing } from "../store/pcmRing";
 
 export interface AnalyzerOptions {
   sampleRate: number;

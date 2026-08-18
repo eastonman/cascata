@@ -1,4 +1,4 @@
-import { ringSlot, type AbsoluteRing } from "./ring";
+import { type AbsoluteRing, ringSlot } from "./ring";
 
 /** f0 sentinel: the column was analysed and found silent or aperiodic. */
 export const F0_SILENT = 0;
