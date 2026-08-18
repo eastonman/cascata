@@ -98,6 +98,12 @@ export class WaterfallRenderer {
   /**
    * Draws columns [startCol, endCol) into `dest`, cropping frequency to
    * bins [0, maxBin]. Splits into two draws at the ring wrap.
+   *
+   * `pxPerCol` is passed in rather than derived from `dest.w`, because the
+   * drawn range is not always the requested one: before a screenful has been
+   * recorded `startCol` is negative, and deriving the scale from the clamped
+   * range would stretch the few real columns across the whole canvas. The
+   * clamped-away columns become blank space via `offsetX` instead.
    */
   blit(
     ctx: CanvasRenderingContext2D,
@@ -105,34 +111,26 @@ export class WaterfallRenderer {
     startCol: number,
     endCol: number,
     maxBin: number,
+    pxPerCol: number,
   ): void {
     if (this.slots === 0) return;
     const from = Math.max(0, Math.floor(startCol));
     const to = Math.max(from, Math.ceil(endCol));
-    const count = Math.min(to - from, this.slots);
-    if (count === 0) return;
+    const first = Math.max(from, to - this.slots);
+    const count = to - first;
+    if (count <= 0) return;
 
     const top = Math.min(this.binCount - 1, Math.max(0, maxBin));
     const sy = this.binCount - 1 - top;
     const sh = top + 1;
-    const pxPerCol = dest.w / (to - from);
+    const offsetX = dest.x + (first - startCol) * pxPerCol;
 
     ctx.imageSmoothingEnabled = false;
 
-    const firstSlot = ((from % this.slots) + this.slots) % this.slots;
+    const firstSlot = ((first % this.slots) + this.slots) % this.slots;
     const head = Math.min(count, this.slots - firstSlot);
 
-    ctx.drawImage(
-      this.canvas,
-      firstSlot,
-      sy,
-      head,
-      sh,
-      dest.x,
-      dest.y,
-      head * pxPerCol,
-      dest.h,
-    );
+    ctx.drawImage(this.canvas, firstSlot, sy, head, sh, offsetX, dest.y, head * pxPerCol, dest.h);
 
     const tail = count - head;
     if (tail > 0) {
@@ -142,7 +140,7 @@ export class WaterfallRenderer {
         sy,
         tail,
         sh,
-        dest.x + head * pxPerCol,
+        offsetX + head * pxPerCol,
         dest.y,
         tail * pxPerCol,
         dest.h,

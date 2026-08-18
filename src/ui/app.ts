@@ -70,6 +70,8 @@ export class App {
   private hover: { x: number; y: number } | null = null;
   private wakeLock: WakeLockSentinel | null = null;
   private frame = 0;
+  private lastFollowing = true;
+  private lastStatus = "";
 
   constructor(root: HTMLElement) {
     this.settings = loadSettings();
@@ -374,7 +376,11 @@ export class App {
     analyzer.pump();
     view.setLatest(columns.writeIndex);
     view.setEarliest(columns.earliestIndex);
-    this.controls.setFollowState(view.following);
+    // Only touch the DOM when the value actually changes; this runs 60x/s.
+    if (view.following !== this.lastFollowing) {
+      this.lastFollowing = view.following;
+      this.controls.setFollowState(view.following);
+    }
 
     const player = this.player;
     if (player?.playing) {
@@ -386,7 +392,14 @@ export class App {
     const startCol = view.startCol;
     const endCol = view.endCol;
     this.waterfall.sync(columns, startCol, endCol);
-    this.waterfall.blit(this.ctx, { x: 0, y: 0, w, h }, startCol, endCol, this.maxBin);
+    this.waterfall.blit(
+      this.ctx,
+      { x: 0, y: 0, w, h },
+      startCol,
+      endCol,
+      this.maxBin,
+      view.pxPerCol,
+    );
 
     const geo: OverlayGeometry = {
       x: 0,
@@ -441,10 +454,14 @@ export class App {
     );
   }
 
+  /** Status text only resolves to a tenth of a second, so refreshing it 60x/s is wasted DOM work. */
   private updateStatus(view: ViewState, columns: ColumnStore): void {
     const seconds = view.colToTime(columns.writeIndex - columns.earliestIndex);
     const mode = this.capturing ? "Recording" : "Stopped";
     const follow = view.following ? "live" : "pinned";
-    this.controls.setStatus(`${mode} · ${follow} · ${formatClock(seconds)} buffered`);
+    const text = `${mode} · ${follow} · ${formatClock(seconds)} buffered`;
+    if (text === this.lastStatus) return;
+    this.lastStatus = text;
+    this.controls.setStatus(text);
   }
 }
