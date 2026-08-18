@@ -1,5 +1,6 @@
 import { DEFAULT_DB_FLOOR, DEFAULT_DB_RANGE } from "../config";
 import type { ColumnStore } from "../store/columnStore";
+import { ringSlot } from "../store/ring";
 import { buildColormap, type ColormapName } from "./colormap";
 
 export interface BlitRect {
@@ -40,11 +41,11 @@ export class WaterfallRenderer {
   /** Absolute column currently held by each slot, or -1 if unrendered. */
   private slotCol = new Int32Array(0);
 
-  constructor(binCount: number, colormap: ColormapName = "magma") {
+  /** The offscreen canvas is passed in rather than created here, per DESIGN.md §3.1. */
+  constructor(canvas: HTMLCanvasElement, binCount: number, colormap: ColormapName = "magma") {
     this.binCount = binCount;
     this.lut = buildColormap(colormap);
 
-    const canvas = document.createElement("canvas");
     canvas.width = 1;
     canvas.height = binCount;
     const ctx = canvas.getContext("2d", { alpha: false });
@@ -52,6 +53,22 @@ export class WaterfallRenderer {
     this.canvas = canvas;
     this.ctx = ctx;
     this.columnData = ctx.createImageData(1, binCount);
+  }
+
+  /**
+   * The columns actually backed by ring slots for a requested range.
+   *
+   * sync and blit must agree on this exactly: sync decides which columns get
+   * rendered *into* slots, blit decides which slots get drawn. If the two ever
+   * computed a different `first`, blit would composite slots sync never wrote
+   * — stale or blank columns, and no error raised. One definition makes that
+   * agreement structural rather than a coincidence of identical typing.
+   */
+  private range(startCol: number, endCol: number): { first: number; to: number } {
+    const from = Math.max(0, Math.floor(startCol));
+    const to = Math.max(from, Math.ceil(endCol));
+    // A range wider than the ring can only keep its last `slots` columns.
+    return { first: Math.max(from, to - this.slots), to };
   }
 
   setColormap(name: ColormapName): void {
@@ -82,13 +99,10 @@ export class WaterfallRenderer {
   /** Renders any column in [startCol, endCol) whose slot holds something else. */
   sync(store: ColumnStore, startCol: number, endCol: number): void {
     if (this.slots === 0) return;
-    const from = Math.max(0, Math.floor(startCol));
-    const to = Math.max(from, Math.ceil(endCol));
-    // A range wider than the ring can only keep its last `slots` columns.
-    const first = Math.max(from, to - this.slots);
+    const { first, to } = this.range(startCol, endCol);
 
     for (let col = first; col < to; col++) {
-      const slot = ((col % this.slots) + this.slots) % this.slots;
+      const slot = ringSlot(col, this.slots);
       if (this.slotCol[slot] === col) continue;
       this.renderColumn(store, col, slot);
       this.slotCol[slot] = col;
@@ -114,9 +128,7 @@ export class WaterfallRenderer {
     pxPerCol: number,
   ): void {
     if (this.slots === 0) return;
-    const from = Math.max(0, Math.floor(startCol));
-    const to = Math.max(from, Math.ceil(endCol));
-    const first = Math.max(from, to - this.slots);
+    const { first, to } = this.range(startCol, endCol);
     const count = to - first;
     if (count <= 0) return;
 
@@ -127,7 +139,7 @@ export class WaterfallRenderer {
 
     ctx.imageSmoothingEnabled = false;
 
-    const firstSlot = ((first % this.slots) + this.slots) % this.slots;
+    const firstSlot = ringSlot(first, this.slots);
     const head = Math.min(count, this.slots - firstSlot);
 
     ctx.drawImage(this.canvas, firstSlot, sy, head, sh, offsetX, dest.y, head * pxPerCol, dest.h);

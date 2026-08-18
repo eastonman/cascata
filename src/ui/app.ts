@@ -8,7 +8,9 @@ import {
 } from "../config";
 import { Analyzer } from "../analysis/analyzer";
 import { Player } from "../audio/player";
+import type { AudioSource } from "../audio/source";
 import { WebAudioSource } from "../audio/webAudioSource";
+import { freqToBin } from "../dsp/logBins";
 import { encodeWav } from "../export/wav";
 import { saveBlob } from "../platform/files";
 import { loadSettings, saveSettings, type Settings } from "../platform/settings";
@@ -21,6 +23,7 @@ import {
   drawTimeAxis,
   formatClock,
   formatReadout,
+  yToBin,
   yToFreq,
   type OverlayGeometry,
 } from "../render/overlay";
@@ -54,12 +57,16 @@ export class App {
   private readonly controls: ControlsHandle;
 
   private settings: Settings;
-  private readonly source = new WebAudioSource();
+  // Typed as the interface, and the AudioContext is owned here rather than
+  // reached out of the source, so a native capture source (DESIGN.md §2.4) can
+  // be substituted without the playback path or this class changing shape.
+  private audioContext: AudioContext | null = null;
+  private source: AudioSource | null = null;
   private pcm: PcmRing | null = null;
   private columns: ColumnStore | null = null;
   private analyzer: Analyzer | null = null;
   private player: Player | null = null;
-  private waterfall = new WaterfallRenderer(BIN_COUNT);
+  private readonly waterfall: WaterfallRenderer;
   private view: ViewState | null = null;
 
   private sampleRate = 0;
@@ -72,6 +79,11 @@ export class App {
   private frame = 0;
   private lastFollowing = true;
   private lastStatus = "";
+  /** Cached from ResizeObserver: reading clientWidth in the draw loop forces layout 60x/s. */
+  private cssWidth = 0;
+  private cssHeight = 0;
+  /** Derived from settings.freqLimit; recomputed on change rather than per frame. */
+  private maxBin = 0;
 
   constructor(root: HTMLElement) {
     this.settings = loadSettings();
@@ -98,8 +110,13 @@ export class App {
     if (!ctx) throw new Error("2D canvas context unavailable");
     this.ctx = ctx;
 
-    this.waterfall.setColormap(this.settings.colormap);
+    this.waterfall = new WaterfallRenderer(
+      document.createElement("canvas"),
+      BIN_COUNT,
+      this.settings.colormap,
+    );
     this.waterfall.setDbRange(this.settings.dbFloor, this.settings.dbRange);
+    this.maxBin = this.computeMaxBin();
 
     this.controls.setCaptureState(false);
     this.controls.setPlayState(false);
@@ -129,7 +146,7 @@ export class App {
   // --- capture -------------------------------------------------------------
 
   private async toggleCapture(): Promise<void> {
-    if (this.capturing) {
+    if (this.capturing && this.source) {
       await this.source.stop();
       this.capturing = false;
       this.controls.setCaptureState(false);
@@ -137,6 +154,12 @@ export class App {
       void this.releaseWakeLock();
       return;
     }
+
+    // Created on first capture, not at construction: an AudioContext made
+    // before a user gesture starts suspended, and Safari will not resume it.
+    this.audioContext ??= new AudioContext();
+    if (this.audioContext.state === "suspended") await this.audioContext.resume();
+    this.source ??= new WebAudioSource(this.audioContext);
 
     try {
       await this.source.start((chunk) => this.pcm?.write(chunk));
@@ -174,11 +197,10 @@ export class App {
 
     this.view = new ViewState({ sampleRate: this.sampleRate });
     this.view.pxPerCol = this.settings.timeZoom;
-    this.view.widthPx = this.canvas.clientWidth;
+    this.view.widthPx = this.cssWidth;
 
-    const audioContext = this.source.audioContext;
-    if (audioContext) {
-      this.player = new Player(audioContext);
+    if (this.audioContext) {
+      this.player = new Player(this.audioContext);
       this.player.onEnded = () => this.controls.setPlayState(false);
     }
 
@@ -206,13 +228,14 @@ export class App {
       this.waterfall.ensureSlots(this.view.visibleCols);
       this.waterfall.invalidate();
     }
-    // freqLimit and a4 are read fresh each frame; nothing to do here.
+    if (patch.freqLimit !== undefined) this.maxBin = this.computeMaxBin();
+    // a4 is read fresh each frame; nothing to do here.
   }
 
   /** Highest stored bin the current display limit reaches. */
-  private get maxBin(): number {
-    const t = Math.log(this.settings.freqLimit / F_MIN) / Math.log(F_MAX / F_MIN);
-    return Math.min(BIN_COUNT - 1, Math.max(1, Math.round(t * (BIN_COUNT - 1))));
+  private computeMaxBin(): number {
+    const bin = freqToBin(this.settings.freqLimit, F_MIN, F_MAX, BIN_COUNT);
+    return Math.min(BIN_COUNT - 1, Math.max(1, Math.round(bin)));
   }
 
   // --- playback and export -------------------------------------------------
@@ -229,10 +252,17 @@ export class App {
 
     const from = this.hasCursor ? view.colToSample(this.cursorCol) : pcm.earliestIndex;
     const start = Math.max(pcm.earliestIndex, from);
-    const count = Math.min(pcm.writeIndex - start, MAX_PLAYBACK_SECONDS * this.sampleRate);
+    // This bound is both the DESIGN.md §7 playback cap and the size of the
+    // buffer copied out of the ring, which is why it lives here and not in Player.
+    const count = Math.min(
+      pcm.writeIndex - start,
+      Math.floor(MAX_PLAYBACK_SECONDS * this.sampleRate),
+    );
     if (count <= 0) return;
 
-    player.play(pcm.readInt16(start, count), this.sampleRate, start);
+    const samples = new Float32Array(count);
+    pcm.read(start, samples);
+    player.play(samples, this.sampleRate, start);
     this.controls.setPlayState(true);
   }
 
@@ -330,6 +360,9 @@ export class App {
     // Draw in CSS pixels; the backing store carries the device ratio.
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+    this.cssWidth = w;
+    this.cssHeight = h;
+
     if (this.view) {
       this.view.widthPx = w;
       this.waterfall.ensureSlots(this.view.visibleCols);
@@ -363,9 +396,7 @@ export class App {
   // --- draw loop -----------------------------------------------------------
 
   private tick(): void {
-    const { view, columns, analyzer, pcm } = this;
-    const w = this.canvas.clientWidth;
-    const h = this.canvas.clientHeight;
+    const { view, columns, analyzer, pcm, cssWidth: w, cssHeight: h } = this;
     if (w === 0 || h === 0) return;
 
     this.ctx.fillStyle = "#000";
@@ -407,6 +438,7 @@ export class App {
       w,
       h,
       startCol,
+      endCol,
       pxPerCol: view.pxPerCol,
       maxBin: this.maxBin,
       binCount: BIN_COUNT,
@@ -434,10 +466,9 @@ export class App {
     const col = this.view.xToCol(hover.x);
     const freq = yToFreq(hover.y, geo);
     const view = columns.columnView(col);
-    // The bin under the pointer, in the same log grid the column is stored on.
-    const bin = Math.round(
-      ((Math.log(freq) - Math.log(F_MIN)) / (Math.log(F_MAX) - Math.log(F_MIN))) * (BIN_COUNT - 1),
-    );
+    // yToFreq exponentiates the bin position, so converting the frequency back
+    // to a bin would just undo it. Take the bin straight from the y.
+    const bin = Math.round(yToBin(hover.y, geo));
     const db = view && bin >= 0 && bin < BIN_COUNT ? view[bin] : -127;
 
     drawCrosshair(

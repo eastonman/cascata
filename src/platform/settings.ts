@@ -1,5 +1,7 @@
 import {
   A4_OPTIONS,
+  COLORMAP_NAMES,
+  DEFAULT_COLORMAP,
   DB_FLOOR_MAX,
   DB_FLOOR_MIN,
   DB_RANGE_MAX,
@@ -13,9 +15,9 @@ import {
   FFT_SIZES,
   FREQ_LIMITS,
   TIME_ZOOMS,
+  type ColormapName,
   type FftSize,
 } from "../config";
-import { COLORMAP_NAMES, type ColormapName } from "../render/colormap";
 
 export const SETTINGS_KEY = "cascata.settings.v1";
 
@@ -33,7 +35,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   fftSize: DEFAULT_FFT_SIZE,
   freqLimit: DEFAULT_FREQ_LIMIT,
-  colormap: "magma",
+  colormap: DEFAULT_COLORMAP,
   timeZoom: DEFAULT_TIME_ZOOM,
   dbFloor: DEFAULT_DB_FLOOR,
   dbRange: DEFAULT_DB_RANGE,

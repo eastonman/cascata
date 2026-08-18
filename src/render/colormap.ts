@@ -1,5 +1,6 @@
-export const COLORMAP_NAMES = ["magma", "viridis", "gray"] as const;
-export type ColormapName = (typeof COLORMAP_NAMES)[number];
+import { COLORMAP_NAMES, type ColormapName } from "../config";
+
+export { COLORMAP_NAMES, type ColormapName };
 
 /**
  * 17 evenly spaced control stops per map, sampled from matplotlib's magma and

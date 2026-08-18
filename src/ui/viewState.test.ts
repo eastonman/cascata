@@ -81,18 +81,18 @@ test("zoom keeps startCol anchored while pinned", () => {
   expect(v.visibleCols).toBe(500);
 });
 
-test("x and column conversions are inverse", () => {
+test("xToCol maps pixels to columns at the current zoom", () => {
   const v = view();
   v.pxPerCol = 2;
-  const col = v.startCol + 37;
-  expect(v.xToCol(v.colToX(col))).toBe(col);
+  expect(v.xToCol(0)).toBe(v.startCol);
+  expect(v.xToCol(74)).toBe(v.startCol + 37);
+  expect(v.xToCol(75)).toBe(v.startCol + 37); // sub-column precision floors
 });
 
 test("column and time conversions follow the hop grid", () => {
   const v = view();
   expect(v.colToTime(0)).toBe(0);
   expect(v.colToTime(SR / HOP)).toBeCloseTo(1, 6);
-  expect(v.timeToCol(1)).toBe(Math.round(SR / HOP));
   expect(v.colToSample(10)).toBe(10 * HOP);
   expect(v.sampleToCol(10 * HOP)).toBe(10);
 });

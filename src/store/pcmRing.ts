@@ -1,3 +1,5 @@
+import { ringSlot, type AbsoluteRing } from "./ring";
+
 /**
  * Int16 PCM ring buffer — the single source of truth for recorded audio
  * (DESIGN.md §3.2).
@@ -11,7 +13,7 @@
  * default) and the YIN silence gate (-55 dBFS), so nothing downstream can see
  * it.
  */
-export class PcmRing {
+export class PcmRing implements AbsoluteRing {
   readonly capacity: number;
   private readonly data: Int16Array;
   private written = 0;
@@ -44,7 +46,7 @@ export class PcmRing {
     const skip = Math.max(0, n - this.capacity);
     for (let i = skip; i < n; i++) {
       const q = Math.round(chunk[i] * 32767);
-      this.data[(this.written + i) % this.capacity] =
+      this.data[ringSlot(this.written + i, this.capacity)] =
         q > 32767 ? 32767 : q < -32768 ? -32768 : q;
     }
     this.written += n;
@@ -63,7 +65,7 @@ export class PcmRing {
       if (abs < earliest || abs >= this.written) {
         out[i] = 0;
       } else {
-        out[i] = this.data[((abs % this.capacity) + this.capacity) % this.capacity] / 32768;
+        out[i] = this.data[ringSlot(abs, this.capacity)] / 32768;
         filled++;
       }
     }
@@ -77,7 +79,7 @@ export class PcmRing {
     for (let i = 0; i < count; i++) {
       const abs = start + i;
       if (abs >= earliest && abs < this.written) {
-        out[i] = this.data[((abs % this.capacity) + this.capacity) % this.capacity];
+        out[i] = this.data[ringSlot(abs, this.capacity)];
       }
     }
     return out;

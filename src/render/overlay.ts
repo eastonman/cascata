@@ -1,3 +1,4 @@
+import { binToFreq, freqToBin } from "../dsp/logBins";
 import { describeFreq, midiToFreq, noteName } from "../dsp/notes";
 import { ColumnStore, F0_SILENT, F0_UNCOMPUTED } from "../store/columnStore";
 
@@ -18,6 +19,8 @@ export interface OverlayGeometry extends FreqAxis {
   w: number;
   /** Absolute column index at the left edge. */
   startCol: number;
+  /** Absolute column index just past the right edge; the view owns this, so it is passed in. */
+  endCol: number;
   pxPerCol: number;
   a4: number;
   hop: number;
@@ -33,20 +36,22 @@ const PLAYHEAD_COLOR = "rgba(255,120,120,0.95)";
 const CROSSHAIR_COLOR = "rgba(255,255,255,0.5)";
 const LABEL_FONT = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
 
-/** Fractional log-bin position of a frequency. */
-function freqToBin(freq: number, g: FreqAxis): number {
-  return ((Math.log(freq) - Math.log(g.fMin)) / (Math.log(g.fMax) - Math.log(g.fMin))) * (g.binCount - 1);
-}
+/** Candidate time-tick intervals; the first one wide enough on screen wins. */
+const TICK_STEPS_SEC = [1, 2, 5, 10, 30, 60] as const;
+const MIN_TICK_SPACING_PX = 60;
 
 /** Canvas y of a frequency, measured from the top of the plot. */
 export function freqToY(freq: number, g: FreqAxis): number {
-  return g.h * (1 - freqToBin(freq, g) / g.maxBin);
+  return g.h * (1 - freqToBin(freq, g.fMin, g.fMax, g.binCount) / g.maxBin);
+}
+
+/** The stored log-bin under a canvas y. Fractional; round it to index a column. */
+export function yToBin(y: number, g: FreqAxis): number {
+  return (1 - y / g.h) * g.maxBin;
 }
 
 export function yToFreq(y: number, g: FreqAxis): number {
-  const bin = (1 - y / g.h) * g.maxBin;
-  const logMin = Math.log(g.fMin);
-  return Math.exp(logMin + ((Math.log(g.fMax) - logMin) * bin) / (g.binCount - 1));
+  return binToFreq(yToBin(y, g), g.fMin, g.fMax, g.binCount);
 }
 
 export function colToX(col: number, g: OverlayGeometry): number {
@@ -121,7 +126,7 @@ export function drawNoteRuler(ctx: CanvasRenderingContext2D, g: OverlayGeometry)
 export function drawTimeAxis(ctx: CanvasRenderingContext2D, g: OverlayGeometry): void {
   const colsPerSecond = g.sampleRate / g.hop;
   const pxPerSecond = colsPerSecond * g.pxPerCol;
-  const step = [1, 2, 5, 10, 30, 60].find((s) => s * pxPerSecond >= 60) ?? 60;
+  const step = TICK_STEPS_SEC.find((s) => s * pxPerSecond >= MIN_TICK_SPACING_PX) ?? 60;
 
   const startSec = (g.startCol / colsPerSecond);
   const endSec = startSec + g.w / pxPerSecond;
@@ -155,8 +160,6 @@ export function drawPitchCurve(
   g: OverlayGeometry,
   store: ColumnStore,
 ): void {
-  const endCol = g.startCol + Math.ceil(g.w / g.pxPerCol);
-
   ctx.save();
   ctx.strokeStyle = PITCH_COLOR;
   ctx.lineWidth = 1.5;
@@ -164,7 +167,7 @@ export function drawPitchCurve(
   ctx.beginPath();
 
   let pen = false;
-  for (let col = Math.max(0, Math.floor(g.startCol)); col <= endCol; col++) {
+  for (let col = Math.max(0, Math.floor(g.startCol)); col < g.endCol; col++) {
     const f0 = store.getF0(col);
     if (f0 === F0_SILENT || f0 === F0_UNCOMPUTED || f0 < g.fMin || f0 > g.fMax) {
       pen = false;

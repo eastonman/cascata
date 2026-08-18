@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { formatClock, formatReadout, freqToY, yToFreq } from "./overlay";
+import { formatClock, formatReadout, freqToY, yToBin, yToFreq } from "./overlay";
 
 const GEO = { h: 600, binCount: 600, maxBin: 599, fMin: 55, fMax: 12000 };
 
@@ -48,6 +48,17 @@ test("freqToY is logarithmic: equal octaves take equal pixels", () => {
 test("yToFreq inverts freqToY", () => {
   for (const f of [55, 220, 440, 3000, 12000]) {
     expect(yToFreq(freqToY(f, GEO), GEO)).toBeCloseTo(f, 3);
+  }
+});
+
+test("yToBin agrees with converting through frequency and back", () => {
+  const cropped = { ...GEO, maxBin: 400 };
+  for (const g of [GEO, cropped]) {
+    for (const y of [0, 150, 300, 599]) {
+      const viaFreq = ((Math.log(yToFreq(y, g)) - Math.log(g.fMin)) /
+        (Math.log(g.fMax) - Math.log(g.fMin))) * (g.binCount - 1);
+      expect(yToBin(y, g)).toBeCloseTo(viaFreq, 6);
+    }
   }
 });
 

@@ -14,8 +14,7 @@ const SCRIPT_PROCESSOR_BUFFER = 1024;
  * output is not connected to anything.
  */
 export class WebAudioSource implements AudioSource {
-  private context: AudioContext | null;
-  private readonly ownsContext: boolean;
+  private readonly context: AudioContext;
   private stream: MediaStream | null = null;
   private input: MediaStreamAudioSourceNode | null = null;
   private worklet: AudioWorkletNode | null = null;
@@ -23,29 +22,17 @@ export class WebAudioSource implements AudioSource {
   private sink: GainNode | null = null;
   private active = false;
 
-  constructor(context?: AudioContext) {
-    this.context = context ?? null;
-    this.ownsContext = !context;
+  /** The context is owned by the caller, which also needs it for playback. */
+  constructor(context: AudioContext) {
+    this.context = context;
   }
 
   get sampleRate(): number {
-    return this.context?.sampleRate ?? 0;
+    return this.context.sampleRate;
   }
 
   get running(): boolean {
     return this.active;
-  }
-
-  /** The live AudioContext, once start() has created it. Shared with playback. */
-  get audioContext(): AudioContext | null {
-    return this.context;
-  }
-
-  /** The context is created on first start and kept for playback reuse. */
-  async ensureContext(): Promise<AudioContext> {
-    if (!this.context) this.context = new AudioContext();
-    if (this.context.state === "suspended") await this.context.resume();
-    return this.context;
   }
 
   async start(onSamples: SampleSink): Promise<void> {
@@ -54,7 +41,7 @@ export class WebAudioSource implements AudioSource {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: CAPTURE_CONSTRAINTS });
     this.stream = stream;
 
-    const ctx = await this.ensureContext();
+    const ctx = this.context;
     this.input = ctx.createMediaStreamSource(stream);
     this.sink = ctx.createGain();
     this.sink.gain.value = 0;
@@ -108,12 +95,4 @@ export class WebAudioSource implements AudioSource {
     this.stream = null;
   }
 
-  /** Releases the AudioContext. Only meaningful if this instance created it. */
-  async dispose(): Promise<void> {
-    await this.stop();
-    if (this.ownsContext && this.context) {
-      await this.context.close();
-      this.context = null;
-    }
-  }
 }

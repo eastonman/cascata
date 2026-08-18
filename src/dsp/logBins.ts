@@ -1,6 +1,36 @@
 import { BIN_COUNT, F_MAX, F_MIN } from "../config";
 
 /**
+ * Position of a frequency on the stored log grid, as a fractional bin index.
+ *
+ * The grid's *geometry* depends only on (fMin, fMax, binCount); reducing an
+ * FFT spectrum onto it additionally needs (fftSize, sampleRate). These two
+ * functions are the geometry half, kept free-standing so the render and UI
+ * layers — which legitimately have no FFT parameters — can share the one
+ * definition instead of restating it. Every stored Int8 in ColumnStore is
+ * indexed on this mapping, so a second copy that drifts would silently
+ * mis-register the note ruler against the spectrogram it labels.
+ */
+export function freqToBin(
+  freq: number,
+  fMin: number = F_MIN,
+  fMax: number = F_MAX,
+  binCount: number = BIN_COUNT,
+): number {
+  return ((Math.log(freq) - Math.log(fMin)) / (Math.log(fMax) - Math.log(fMin))) * (binCount - 1);
+}
+
+export function binToFreq(
+  bin: number,
+  fMin: number = F_MIN,
+  fMax: number = F_MAX,
+  binCount: number = BIN_COUNT,
+): number {
+  const logMin = Math.log(fMin);
+  return Math.exp(logMin + ((Math.log(fMax) - logMin) * bin) / (binCount - 1));
+}
+
+/**
  * Maps a linear FFT magnitude spectrum onto a fixed logarithmic frequency
  * grid (DESIGN.md §4).
  *
@@ -80,12 +110,12 @@ export class LogBinMap {
 
   /** Fractional log-bin position of a frequency. */
   freqToBin(freq: number): number {
-    return ((Math.log(freq) - this.logMin) / this.logSpan) * (this.binCount - 1);
+    return freqToBin(freq, this.fMin, this.fMax, this.binCount);
   }
 
   /** Frequency at a fractional log-bin position, Hz. */
   binToFreq(bin: number): number {
-    return Math.exp(this.logMin + (this.logSpan * bin) / (this.binCount - 1));
+    return binToFreq(bin, this.fMin, this.fMax, this.binCount);
   }
 
   /** Reduces `magDb` (dBFS per FFT bin) to `out` (dBFS per log bin, clamped to Int8). */

@@ -37,6 +37,15 @@ export const DEFAULT_FREQ_LIMIT = 5000;
 export const TIME_ZOOMS = [0.5, 1, 2, 4] as const;
 export const DEFAULT_TIME_ZOOM = 1;
 
+/**
+ * Selectable colormaps. The name list lives here with the other user-facing
+ * option lists so settings validation does not have to reach into `render/`;
+ * the lookup tables themselves stay in `render/colormap.ts`.
+ */
+export const COLORMAP_NAMES = ["magma", "viridis", "gray"] as const;
+export type ColormapName = (typeof COLORMAP_NAMES)[number];
+export const DEFAULT_COLORMAP: ColormapName = "magma";
+
 /** Colouring maps [DEFAULT_DB_FLOOR, DEFAULT_DB_FLOOR + DEFAULT_DB_RANGE] dBFS onto the colormap. */
 export const DEFAULT_DB_FLOOR = -92;
 export const DEFAULT_DB_RANGE = 66;

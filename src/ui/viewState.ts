@@ -113,16 +113,8 @@ export class ViewState {
     return this.startCol + Math.floor(x / this.zoom);
   }
 
-  colToX(col: number): number {
-    return (col - this.startCol) * this.zoom;
-  }
-
   colToTime(col: number): number {
     return (col * HOP) / this.sampleRate;
-  }
-
-  timeToCol(seconds: number): number {
-    return Math.round((seconds * this.sampleRate) / HOP);
   }
 
   colToSample(col: number): number {

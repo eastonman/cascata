@@ -1,12 +1,12 @@
-import { MAX_PLAYBACK_SECONDS } from "../config";
-
 /**
  * Plays a range of recorded PCM and exposes a playhead in absolute sample
  * coordinates, so the view can follow it on the same index scheme the store
  * and the analyzer use.
  *
- * Playback is capped at MAX_PLAYBACK_SECONDS: with an 8-minute scrollback a
- * click near the start would otherwise begin an unstoppably long play.
+ * Takes float samples, which is what AudioBuffer wants and what PcmRing.read
+ * already produces — this class does no dequantisation of its own. It also
+ * does not bound the range: the caller owns the MAX_PLAYBACK_SECONDS policy,
+ * because that same bound decides how much it copies out of the ring.
  */
 export class Player {
   onEnded?: () => void;
@@ -34,16 +34,13 @@ export class Player {
     return this.startSample + offset;
   }
 
-  play(pcm: Int16Array, sampleRate: number, startSample: number): void {
+  play(samples: Float32Array, sampleRate: number, startSample: number): void {
     this.stop();
-    if (pcm.length === 0) return;
+    if (samples.length === 0) return;
 
-    const maxSamples = Math.floor(MAX_PLAYBACK_SECONDS * sampleRate);
-    const length = Math.min(pcm.length, maxSamples);
-
+    const length = samples.length;
     const buffer = this.context.createBuffer(1, length, sampleRate);
-    const channel = buffer.getChannelData(0);
-    for (let i = 0; i < length; i++) channel[i] = pcm[i] / 32768;
+    buffer.getChannelData(0).set(samples);
 
     const node = this.context.createBufferSource();
     node.buffer = buffer;

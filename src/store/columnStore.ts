@@ -1,3 +1,5 @@
+import { ringSlot, type AbsoluteRing } from "./ring";
+
 /** f0 sentinel: the column was analysed and found silent or aperiodic. */
 export const F0_SILENT = 0;
 /** f0 sentinel: the column was never analysed (pitch overlay was off). */
@@ -12,7 +14,7 @@ export const F0_UNCOMPUTED = -1;
  * the full 8 minutes; 1 dB of quantisation is well under what the colormap can
  * show.
  */
-export class ColumnStore {
+export class ColumnStore implements AbsoluteRing {
   readonly capacityCols: number;
   readonly binCount: number;
 
@@ -51,7 +53,7 @@ export class ColumnStore {
     if (db.length !== this.binCount) {
       throw new RangeError(`column must have ${this.binCount} bins, got ${db.length}`);
     }
-    const slot = this.written % this.capacityCols;
+    const slot = ringSlot(this.written, this.capacityCols);
     this.bins.set(db, slot * this.binCount);
     this.f0[slot] = f0;
     this.written++;
@@ -62,7 +64,7 @@ export class ColumnStore {
     if (out.length !== this.binCount) {
       throw new RangeError(`out must have ${this.binCount} bins, got ${out.length}`);
     }
-    const offset = (col % this.capacityCols) * this.binCount;
+    const offset = ringSlot(col, this.capacityCols) * this.binCount;
     out.set(this.bins.subarray(offset, offset + this.binCount));
     return true;
   }
@@ -70,18 +72,18 @@ export class ColumnStore {
   /** Zero-copy view of a stored column. Valid only until that slot is overwritten. */
   columnView(col: number): Int8Array | null {
     if (!this.has(col)) return null;
-    const offset = (col % this.capacityCols) * this.binCount;
+    const offset = ringSlot(col, this.capacityCols) * this.binCount;
     return this.bins.subarray(offset, offset + this.binCount);
   }
 
   getF0(col: number): number {
     if (!this.has(col)) return F0_UNCOMPUTED;
-    return this.f0[col % this.capacityCols];
+    return this.f0[ringSlot(col, this.capacityCols)];
   }
 
   setF0(col: number, value: number): void {
     if (!this.has(col)) return;
-    this.f0[col % this.capacityCols] = value;
+    this.f0[ringSlot(col, this.capacityCols)] = value;
   }
 
   clear(): void {
