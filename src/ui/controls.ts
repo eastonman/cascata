@@ -16,6 +16,8 @@ export interface ControlHandlers {
   onTogglePlay(): void;
   onFollow(): void;
   onExport(): void;
+  onImport(file: File): void;
+  onClear(): void;
   onSettingsChange(patch: Partial<Settings>): void;
 }
 
@@ -25,6 +27,8 @@ export interface ControlsHandle {
   setFollowState(following: boolean): void;
   setExportEnabled(enabled: boolean): void;
   setPlayEnabled(enabled: boolean): void;
+  setImportEnabled(enabled: boolean): void;
+  setClearEnabled(enabled: boolean): void;
   setStatus(text: string): void;
 }
 
@@ -121,6 +125,23 @@ export function createControls(
   const exportBtn = el("button", { id: "export", textContent: "Export WAV" });
   onClick(exportBtn, () => handlers.onExport());
 
+  // A hidden input rather than a visible one: the file control's native
+  // appearance cannot be styled to match the rest of the bar, and the button
+  // needs to carry an enabled state of its own.
+  const fileInput = el("input", { type: "file", accept: "audio/*", hidden: true });
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    // Reset first, so picking the same file twice in a row still fires change.
+    fileInput.value = "";
+    if (file) handlers.onImport(file);
+  });
+
+  const importBtn = el("button", { id: "import", textContent: "Import" });
+  onClick(importBtn, () => fileInput.click());
+
+  const clearBtn = el("button", { id: "clear", textContent: "Clear" });
+  onClick(clearBtn, () => handlers.onClear());
+
   const windowSel = select(
     FFT_SIZES,
     settings.fftSize,
@@ -172,7 +193,10 @@ export function createControls(
     record,
     play,
     followBtn,
+    importBtn,
+    clearBtn,
     exportBtn,
+    fileInput,
     group("Window", windowSel),
     group("Max freq", freqSel),
     group("Colors", colorSel),
@@ -206,6 +230,12 @@ export function createControls(
     },
     setPlayEnabled(enabled) {
       play.disabled = !enabled;
+    },
+    setImportEnabled(enabled) {
+      importBtn.disabled = !enabled;
+    },
+    setClearEnabled(enabled) {
+      clearBtn.disabled = !enabled;
     },
     setStatus(text) {
       status.textContent = text;

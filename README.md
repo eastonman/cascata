@@ -25,7 +25,40 @@ colour. A YIN-derived pitch curve is overlaid on top.
 | Stop playback | <kbd>Esc</kbd> |
 | Pan | <kbd>←</kbd> / <kbd>→</kbd>, hold <kbd>Shift</kbd> to go faster |
 | Read a point | Hover for time, frequency, note ± cents, and level |
+| Load an audio file | **Import** |
+| Throw away the recording | **Clear** |
 | Save the audio | **Export WAV** |
+
+### Importing a file
+
+**Import** decodes an audio file and analyses it exactly as if you had sung it:
+the waterfall, scrubbing, playback, crosshair, and export all work on it
+unchanged. It **replaces** whatever is currently in the buffer, so export first
+if you want to keep a recording.
+
+Whatever formats your browser can decode will work — WAV, MP3, and M4A
+everywhere; FLAC and OGG vary. Stereo files are averaged to mono, matching how
+the microphone is captured. The file is resampled to your device's rate, so the
+frequency axis reads the same as it does for a recording.
+
+The buffer grows to fit the file rather than staying at the 8-minute recording
+limit, up to about 1 GB of analysis data — roughly 144 minutes at 48 kHz. Longer
+files are truncated from the start and the status bar says so.
+
+Two things to expect on a long file:
+
+- **Analysis takes a while.** It runs in the background at about 30× real time,
+  so a 30-minute file needs around a minute before the whole waterfall is
+  filled. Progress shows in the status bar, and the part already analysed is
+  usable immediately.
+- **Memory is proportional to length.** A 3-minute file costs ~22 MB, a
+  30-minute one ~225 MB. Above ~300 MB the status bar warns you. On a phone a
+  file that large may get the tab killed by the operating system — that is
+  outside what the page can catch or prevent.
+
+**Clear** discards the recording and returns to the empty state. It is
+unavailable while recording, so stopping first is the deliberate step; there is
+no extra confirmation.
 
 ### Settings
 
@@ -46,8 +79,9 @@ audio — changing one never costs you what you have already sung.
 
 ### Things worth knowing
 
-- **The last 8 minutes are kept**, then the oldest audio is overwritten. Export
-  before you lose something you want.
+- **The last 8 minutes are kept** while recording, then the oldest audio is
+  overwritten. Export before you lose something you want. (Imported files are
+  not subject to this — see above.)
 - **Nothing is persisted.** Closing the tab discards the recording.
 - **The pitch curve is deliberately unsmoothed.** Vibrato rate and depth are
   things you are trying to observe, and smoothing would flatten them. Octave
@@ -93,7 +127,7 @@ src/
   dsp/          FFT, windowing, log binning, YIN, note names — pure functions
   store/        PCM ring buffer, spectrum column store — pure data structures
   analysis/     Analyzer: derives columns and f0 from PCM
-  audio/        AudioSource interface, Web Audio capture, playback
+  audio/        AudioSource interface, Web Audio capture, file decode, playback
   render/       colormap, waterfall renderer, overlays
   platform/     settings and file-save adapters
   export/       WAV encoder
@@ -122,7 +156,7 @@ anchors.
 
 `bun test` covers the pure layers: DSP numerics, the stores, the analyzer's
 time grid, the WAV header, settings validation, and the view-state interaction
-rules. 116 tests.
+rules. 125 tests.
 
 Rendering and interaction are **not** covered automatically. There is a manual
 checklist for them; ask for `docs/manual-verification.md` if you do not have it

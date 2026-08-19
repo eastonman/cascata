@@ -1,8 +1,19 @@
 import { Analyzer } from "../analysis/analyzer";
+import { decodeAudioFile } from "../audio/decodeFile";
 import { Player } from "../audio/player";
 import type { AudioSource } from "../audio/source";
 import { WebAudioSource } from "../audio/webAudioSource";
-import { BIN_COUNT, F_MAX, F_MIN, HOP, MAX_PLAYBACK_SECONDS, RECORD_SECONDS } from "../config";
+import {
+  ANALYSIS_BUDGET_MS,
+  BIN_COUNT,
+  F_MAX,
+  F_MIN,
+  HOP,
+  IMPORT_WARN_BYTES,
+  MAX_IMPORT_BYTES,
+  MAX_PLAYBACK_SECONDS,
+  RECORD_SECONDS,
+} from "../config";
 import { freqToBin } from "../dsp/logBins";
 import { encodeWav } from "../export/wav";
 import { saveBlob } from "../platform/files";
@@ -21,6 +32,7 @@ import {
   yToFreq,
 } from "../render/overlay";
 import { WaterfallRenderer } from "../render/waterfall";
+import { planImportCapacity } from "../store/capacity";
 import { ColumnStore } from "../store/columnStore";
 import { PcmRing } from "../store/pcmRing";
 import { type ControlsHandle, createControls } from "./controls";
@@ -63,6 +75,9 @@ export class App {
   private view: ViewState | null = null;
 
   private sampleRate = 0;
+  /** Seconds the current stores hold. Recording needs RECORD_SECONDS; an import sizes to its file. */
+  private capacitySeconds = 0;
+  private importing = false;
   private capturing = false;
   private cursorCol = 0;
   private hasCursor = false;
@@ -72,6 +87,9 @@ export class App {
   private frame = 0;
   private lastFollowing = true;
   private lastStatus = "";
+  /** Until this timestamp, the draw loop leaves a transient message alone. */
+  private statusHoldUntil = 0;
+  private heldText = "";
   /** Cached from ResizeObserver: reading clientWidth in the draw loop forces layout 60x/s. */
   private cssWidth = 0;
   private cssHeight = 0;
@@ -86,6 +104,8 @@ export class App {
       onTogglePlay: () => void this.togglePlay(),
       onFollow: () => this.view?.follow(),
       onExport: () => this.exportWav(),
+      onImport: (file) => void this.importFile(file),
+      onClear: () => this.clearRecording(),
       onSettingsChange: (patch) => this.applySettings(patch),
     });
 
@@ -116,6 +136,8 @@ export class App {
     this.controls.setFollowState(true);
     this.controls.setExportEnabled(false);
     this.controls.setPlayEnabled(false);
+    this.controls.setImportEnabled(true);
+    this.controls.setClearEnabled(false);
 
     this.bindPointer();
     this.bindKeyboard();
@@ -144,6 +166,8 @@ export class App {
       this.capturing = false;
       this.controls.setCaptureState(false);
       this.controls.setStatus("Stopped");
+      this.controls.setImportEnabled(true);
+      this.controls.setClearEnabled(this.hasRecording());
       void this.releaseWakeLock();
       return;
     }
@@ -171,15 +195,18 @@ export class App {
       source = this.source;
       await source.start((chunk) => this.pcm?.write(chunk));
     } catch (err) {
-      this.controls.setStatus(`Could not start capture: ${(err as Error).message}`);
+      this.notify(`Could not start capture: ${(err as Error).message}`);
       return;
     }
 
     // Stores are sized from the real device rate, which is only known once the
-    // context exists. Rate changes between sessions rebuild them.
-    if (this.sampleRate !== source.sampleRate) {
+    // context exists. Rate changes between sessions rebuild them -- and so does
+    // returning from an import, which leaves a ring sized to its file rather
+    // than to RECORD_SECONDS. Recording into that oversized ring would quietly
+    // put the recording path above the DESIGN.md §1.2 budget.
+    if (this.sampleRate !== source.sampleRate || this.capacitySeconds !== RECORD_SECONDS) {
       this.sampleRate = source.sampleRate;
-      this.buildStores();
+      this.buildStores(RECORD_SECONDS);
     }
 
     this.capturing = true;
@@ -187,6 +214,10 @@ export class App {
     this.controls.setCaptureState(true);
     this.controls.setPlayEnabled(true);
     this.controls.setExportEnabled(true);
+    // Both replace or destroy the buffer being written to, so neither has a
+    // coherent meaning mid-capture.
+    this.controls.setImportEnabled(false);
+    this.controls.setClearEnabled(false);
     void this.acquireWakeLock();
   }
 
@@ -196,11 +227,171 @@ export class App {
     this.capturing = false;
     this.controls.setCaptureState(false);
     this.controls.setStatus("Capture stopped: the microphone became unavailable");
+    this.controls.setImportEnabled(true);
+    this.controls.setClearEnabled(this.hasRecording());
     void this.releaseWakeLock();
   }
 
-  private buildStores(): void {
-    const capacity = Math.ceil(RECORD_SECONDS * this.sampleRate);
+  // --- import and clear ----------------------------------------------------
+
+  /**
+   * Replaces the recorded PCM with a decoded file.
+   *
+   * Import writes into the same ring capture does, so the waterfall, scrubbing,
+   * playback, crosshair, and WAV export all work on it with no second code
+   * path — DESIGN.md §3.2's "recorded PCM is the only source of truth" is what
+   * makes that free.
+   */
+  private async importFile(file: File): Promise<void> {
+    if (this.capturing || this.importing) return;
+    this.importing = true;
+    this.controls.setImportEnabled(false);
+    this.controls.setStatus(`Decoding ${file.name}…`);
+
+    try {
+      // A file picker click is a user gesture, so a context can be created here
+      // even if capture has never run.
+      this.audioContext ??= new AudioContext();
+      if (this.audioContext.state !== "running") await this.audioContext.resume();
+
+      // Decode before tearing anything down: a failed import must never cost
+      // the user the recording they already have.
+      const samples = await decodeAudioFile(file, this.audioContext);
+      if (samples.length === 0) {
+        this.notify(`${file.name} contains no audio`);
+        return;
+      }
+
+      const rate = this.audioContext.sampleRate;
+      const duration = samples.length / rate;
+      const plan = planImportCapacity(duration, rate, MAX_IMPORT_BYTES);
+      if (plan.seconds <= 0) {
+        this.notify("Import budget is too small for this file");
+        return;
+      }
+      if (plan.bytes > IMPORT_WARN_BYTES) {
+        this.notify(
+          `Importing ${formatClock(plan.seconds)} — about ${Math.round(plan.bytes / 1024 ** 2)} MB, which may fail on a phone…`,
+        );
+      }
+
+      this.sampleRate = rate;
+      if (!this.allocateForImport(plan.seconds)) {
+        this.notify("Not enough memory for this file, even reduced");
+        return;
+      }
+
+      const kept = Math.min(samples.length, Math.ceil(this.capacitySeconds * rate));
+      this.pcm?.write(kept === samples.length ? samples : samples.subarray(0, kept));
+
+      // A file is read from its start, so pin there rather than following the
+      // end the way a live recording does. The view has to learn the new range
+      // first: panning against a still-empty view would clamp to -visibleCols
+      // and show a screen of blank.
+      this.hasCursor = true;
+      this.cursorCol = 0;
+      if (this.view) {
+        this.view.setEarliest(0);
+        this.view.setLatest(Math.ceil(kept / HOP));
+        this.view.panColumns(-Number.MAX_SAFE_INTEGER);
+      }
+      this.hint.hidden = true;
+      this.controls.setPlayEnabled(true);
+      this.controls.setExportEnabled(true);
+      this.controls.setClearEnabled(true);
+
+      const truncated = plan.truncated || kept < samples.length;
+      this.notify(
+        truncated
+          ? `Imported first ${formatClock(kept / rate)} of ${formatClock(duration)} from ${file.name}`
+          : `Imported ${formatClock(duration)} from ${file.name}`,
+        10000,
+      );
+    } catch (err) {
+      this.notify(`Could not read ${file.name}: ${(err as Error).message}`);
+    } finally {
+      this.importing = false;
+      this.controls.setImportEnabled(!this.capturing);
+    }
+  }
+
+  /**
+   * Builds stores for an import, backing off when the engine refuses.
+   *
+   * A RangeError from a large typed array is catchable and worth retrying
+   * smaller. The other failure mode — iOS killing the tab under memory
+   * pressure — produces no error at all and cannot be handled from here.
+   */
+  private allocateForImport(seconds: number): boolean {
+    for (const fraction of [1, 0.5, 0.25]) {
+      try {
+        this.buildStores(seconds * fraction);
+        return true;
+      } catch (err) {
+        if (!(err instanceof RangeError)) throw err;
+      }
+    }
+    return false;
+  }
+
+  /** Discards the recording and returns to the empty state. */
+  private clearRecording(): void {
+    if (this.capturing) return;
+
+    this.player?.stop();
+    this.controls.setPlayState(false);
+    this.pcm?.clear();
+    this.analyzer?.reset();
+    this.waterfall.invalidate();
+
+    this.hasCursor = false;
+    this.cursorCol = 0;
+    this.view?.follow();
+    this.hint.hidden = false;
+
+    this.controls.setPlayEnabled(false);
+    this.controls.setExportEnabled(false);
+    this.controls.setClearEnabled(false);
+    this.notify("Cleared", 3000);
+  }
+
+  /**
+   * Shows a message the draw loop will not immediately overwrite.
+   *
+   * updateStatus runs every frame, so a plain setStatus is invisible: it is
+   * replaced before it can be read. Anything the user needs to actually see —
+   * an error, an import result — has to claim the bar for a while.
+   */
+  private notify(text: string, holdMs = 6000): void {
+    this.statusHoldUntil = performance.now() + holdMs;
+    this.heldText = text;
+    this.lastStatus = text;
+    this.controls.setStatus(text);
+  }
+
+  private hasRecording(): boolean {
+    return (this.pcm?.writeIndex ?? 0) > 0;
+  }
+
+  /**
+   * Advances the analyzer for at most ANALYSIS_BUDGET_MS of this frame.
+   *
+   * A live recording produces 46.9 columns/s and this budget affords roughly
+   * 1400, so capture never queues; the budget exists for imports, which drop a
+   * whole file's worth of PCM in at once. Spending a time budget rather than a
+   * fixed column count keeps the frame rate stable across devices that differ
+   * by an order of magnitude in speed.
+   */
+  private pumpWithinBudget(analyzer: Analyzer): void {
+    const deadline = performance.now() + ANALYSIS_BUDGET_MS;
+    do {
+      if (analyzer.pump(64) === 0) return;
+    } while (performance.now() < deadline);
+  }
+
+  private buildStores(capacitySeconds: number): void {
+    this.capacitySeconds = capacitySeconds;
+    const capacity = Math.ceil(capacitySeconds * this.sampleRate);
     this.pcm = new PcmRing(capacity);
     this.columns = new ColumnStore(Math.ceil(capacity / HOP), BIN_COUNT);
     this.analyzer = new Analyzer({
@@ -275,7 +466,7 @@ export class App {
       Math.floor(MAX_PLAYBACK_SECONDS * this.sampleRate),
     );
     if (count <= 0) {
-      this.controls.setStatus("Nothing to play yet");
+      this.notify("Nothing to play yet", 3000);
       return;
     }
 
@@ -298,7 +489,7 @@ export class App {
     const start = pcm.earliestIndex;
     const count = pcm.writeIndex - start;
     if (count <= 0) {
-      this.controls.setStatus("Nothing recorded to export");
+      this.notify("Nothing recorded to export", 3000);
       return;
     }
 
@@ -440,7 +631,7 @@ export class App {
 
     if (!view || !columns || !analyzer || !pcm) return;
 
-    analyzer.pump();
+    this.pumpWithinBudget(analyzer);
     view.setLatest(columns.writeIndex);
     view.setEarliest(columns.earliestIndex);
     // Only touch the DOM when the value actually changes; this runs 60x/s.
@@ -523,6 +714,29 @@ export class App {
 
   /** Status text only resolves to a tenth of a second, so refreshing it 60x/s is wasted DOM work. */
   private updateStatus(view: ViewState, columns: ColumnStore): void {
+    // While an import backlog drains, progress is more useful than the buffer
+    // length -- and it is the only signal that the app is doing anything.
+    const analyzer = this.analyzer;
+    const pcm = this.pcm;
+    if (!this.capturing && analyzer && pcm) {
+      const target = Math.floor(pcm.writeIndex / HOP);
+      if (target > 0 && analyzer.cursor < target) {
+        const pct = Math.floor((analyzer.cursor / target) * 100);
+        // An import's result and its progress are both worth seeing, and an
+        // import is exactly when a backlog exists — so carry the held message
+        // alongside the percentage instead of letting one evict the other.
+        const held = performance.now() < this.statusHoldUntil ? `${this.heldText} · ` : "";
+        const text = `${held}Analysing… ${pct}%`;
+        if (text !== this.lastStatus) {
+          this.lastStatus = text;
+          this.controls.setStatus(text);
+        }
+        return;
+      }
+    }
+
+    if (performance.now() < this.statusHoldUntil) return;
+
     const seconds = view.colToTime(columns.writeIndex - columns.earliestIndex);
     const mode = this.capturing ? "Recording" : "Stopped";
     const follow = view.following ? "live" : "pinned";
