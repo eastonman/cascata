@@ -71,3 +71,29 @@ export const YIN_SILENCE_DB = -55;
  * and broken that budget on the default Play action.
  */
 export const MAX_PLAYBACK_SECONDS = 120;
+
+/**
+ * Store budget for an imported file, in bytes. ~144 min at 48 kHz.
+ *
+ * This deliberately exceeds the 100 MB budget in DESIGN.md §1.2, which applies
+ * to the recording path: RECORD_SECONDS is unchanged, so a live recording
+ * still costs ~60 MB. An import is a one-off the user asked for, and its cost
+ * is proportional to the file — a 3-minute import allocates ~22 MB. Only files
+ * over about two hours reach this cap, and importing one on a phone may get
+ * the tab killed by the OS with no catchable error. IMPORT_WARN_BYTES is the
+ * warning; past it the outcome is not guaranteed.
+ */
+export const MAX_IMPORT_BYTES = 1024 ** 3;
+
+/** Above this planned allocation, warn before importing. ~40 min at 48 kHz. */
+export const IMPORT_WARN_BYTES = 300 * 1024 ** 2;
+
+/**
+ * Per-frame budget for catching the analyzer up to available PCM.
+ *
+ * Spent as a time budget rather than a fixed column count because device speed
+ * varies by an order of magnitude; a count tuned on a laptop drops a phone to
+ * single-digit frame rates. At ~0.34 ms/column this buys ~23 columns a frame,
+ * roughly 30x faster than the 46.9 columns/s a live recording produces.
+ */
+export const ANALYSIS_BUDGET_MS = 8;
