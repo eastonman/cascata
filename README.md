@@ -25,8 +25,9 @@ colour. A YIN-derived pitch curve is overlaid on top.
 | Stop playback | <kbd>Esc</kbd> |
 | Pan | <kbd>←</kbd> / <kbd>→</kbd>, hold <kbd>Shift</kbd> to go faster |
 | Read a point | Hover for time, frequency, note ± cents, and level |
-| Load an audio file | **Import** |
-| Throw away the recording | **Clear** |
+| Load an audio file | **Import**, in the pane's header |
+| Throw away a pane's audio | **Clear**, in the pane's header |
+| Compare two recordings | **Compare** |
 | Save the audio | **Export WAV** |
 
 ### Importing a file
@@ -60,6 +61,38 @@ Two things to expect on a long file:
 unavailable while recording, so stopping first is the deliberate step; there is
 no extra confirmation.
 
+### Comparing two recordings
+
+**Compare** splits the view into two panes, A and B. Each holds its own audio —
+imported or recorded — and they share every display setting, so what you see in
+one is directly comparable to the other.
+
+Each pane's header carries its own **Import**, **Clear**, a duration, and a dot
+that arms it for recording. Only one pane records at a time: there is one
+microphone, and the armed dot decides where it goes. So the usual setup is a
+reference take in A and your own singing recorded live into B.
+
+**Link** locks the two panes together so they scroll and zoom as one. The
+alignment it holds is whatever you had when you pressed it, which makes lining
+two takes up a matter of unlinking, dragging each pane until the onsets match,
+and linking again. Two performances are never the same tempo, so expect to
+re-align rather than to stay in step for minutes.
+
+<kbd>Tab</kbd> switches which pane the keyboard and **Play** act on. If audio is
+playing it keeps playing, from the matching moment in the other pane — that
+instant A/B is the fastest way to hear a difference you can already see.
+
+Hovering one pane draws a faint line at the same moment in the other, so you do
+not have to convert times by eye.
+
+**Split** chooses stacked or side by side. Stacked puts the same frequency at
+the same height in both panes, which is the better default for "are these the
+same pitch". Side by side gives each pane full height at the cost of showing
+half as much time. On a narrow screen the layout falls back to stacked either
+way.
+
+Leaving compare mode keeps both panes' audio — only **Clear** discards it.
+
 ### Settings
 
 All of these are saved across reloads, and none of them touch the recorded
@@ -76,6 +109,7 @@ audio — changing one never costs you what you have already sung.
   floor to see quiet detail, raise it to cut room noise.
 - **A4** — 440 / 442 / 443 Hz. Moves the note gridlines and the cents readout.
 - **Pitch** — show or hide the YIN curve.
+- **Split** — stacked or side by side, for compare mode.
 
 ### Things worth knowing
 
@@ -131,7 +165,7 @@ src/
   render/       colormap, waterfall renderer, overlays
   platform/     settings and file-save adapters
   export/       WAV encoder
-  ui/           view state, controls, app shell and draw loop
+  ui/           pane, view state, pane linking, controls, app shell and draw loop
 ```
 
 Dependencies flow one way: `ui → analysis / render / audio / platform → store / dsp`.
@@ -156,7 +190,7 @@ anchors.
 
 `bun test` covers the pure layers: DSP numerics, the stores, the analyzer's
 time grid, the WAV header, settings validation, and the view-state interaction
-rules. 125 tests.
+rules, and the pane-linking maths. 137 tests.
 
 Rendering and interaction are **not** covered automatically. There is a manual
 checklist for them; ask for `docs/manual-verification.md` if you do not have it
