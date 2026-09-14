@@ -207,20 +207,30 @@ what has to be watched.
 
 `bun run test` covers the pure layers: DSP numerics, the stores, the analyzer's
 time grid, the WAV header, settings validation, the view-state interaction
-rules, pane linking, and the pane model. 178 tests, no DOM.
+rules, pane linking, and the pane model. 188 tests, no DOM.
 
-`bun run e2e` drives the built app in Chromium and WebKit through Playwright.
-It imports a generated fixture and checks that the waterfall paints, that an
-octave step lands higher on the log frequency axis, that a corrupt file leaves
-the previous audio intact, that compare mode and linking behave, and — in
-Chromium, using a fake capture device — that recording from a microphone
-actually works. 37 tests.
+`bun run e2e` drives the built app through Playwright in three projects —
+Chromium, WebKit, and an emulated iPhone. 55 tests. It imports generated
+fixtures and checks the things the eye would otherwise have to: that the
+waterfall paints, that equal octaves occupy equal vertical distance on the log
+frequency axis, that vibrato survives to the screen instead of being smoothed
+flat, that the pitch curve breaks over silence rather than bridging it, that a
+stereo file is downmixed, that the playhead advances and the exported WAV
+parses as mono 16-bit, that compare mode and linking behave, that the phone
+layout wraps and pans under touch, and — in Chromium, using a fake capture
+device — that recording works, survives a device disappearing mid-take, and
+fails legibly when the microphone is refused.
 
-What neither covers, and what
-[docs/manual-verification.md](docs/manual-verification.md) is still for:
-anything needing a real microphone under WebKit, audio you can hear rather than
-measure, phone layout and touch, the screen wake lock, and the eight-minute
-ring wraparound. Run it in both browsers before shipping.
+Measured in pixels, mostly. The waterfall's exact colours depend on the device
+sample rate and on font rendering, so reference screenshots would be brittle
+across machines while telling us less; the tests read back band positions,
+curve rows, and line colours instead.
+
+What neither covers is in
+[docs/manual-verification.md](docs/manual-verification.md), which is short on
+purpose: a real voice, a real pair of ears, browser and OS state the page
+cannot reach, and the checks that cost real time — the eight-minute ring
+wraparound above all. Run it in both browsers before shipping.
 
 ### Contributing
 

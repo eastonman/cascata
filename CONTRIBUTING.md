@@ -34,10 +34,19 @@ regression are independent problems, and finding out about both in the same
 minute beats finding out about them one after the other.
 
 `bun run test` is the unit suite over the pure layers. `bun run e2e` drives the
-built app in Chromium and WebKit: it imports a generated fixture, checks the
-waterfall actually paints and that an octave lands higher on the frequency
-axis, exercises compare mode and linking, and — in Chromium, which can fake a
-capture device — records from a synthetic microphone.
+built app in three projects — Chromium, WebKit, and an emulated iPhone: it
+imports generated fixtures, checks that the waterfall paints and that equal
+octaves take equal vertical space, that vibrato is not smoothed away, that the
+playhead advances and the exported WAV parses, exercises compare mode, linking
+and touch panning, and — in Chromium, which can fake a capture device — records
+from a synthetic microphone and handles it being refused or unplugged.
+
+**Prefer an assertion to a checklist line.** Anything a machine can watch,
+a machine should: the manual checklist was 93 items, nobody ran it end to end,
+and the parts that mattered were indistinguishable from the parts that did not.
+Most of it turned out to be reachable from a pixel read — see `e2e/axes.spec.ts`
+for the pattern of subtracting a silent column from a sounding one so overlays
+cancel instead of being mistaken for signal.
 
 WebKit runs on macOS in CI, and not only because the Linux build fights the
 runner: Linux WebKit is the GTK port, a different engine build from the one
@@ -51,10 +60,10 @@ state, and the `data:` URL an AudioWorklet will not load from.
 
 **Some things still have no automated cover**, and for those
 [docs/manual-verification.md](docs/manual-verification.md) remains the only
-guard: anything involving a real microphone in WebKit, audio you can actually
-hear, phone layout and touch, the screen wake lock, and the eight-minute ring
-wraparound. Run the sections your change touches and say in the PR which ones
-you ran.
+guard. It is grouped by *why* each item is irreducible — a voice, ears,
+browser or OS state, real time, or judgement — so that adding to it is
+uncomfortable unless the item genuinely belongs. Run the sections your change
+touches and say in the PR which ones you ran.
 
 ## What makes a change easy to accept
 
