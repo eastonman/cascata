@@ -12,10 +12,13 @@ import {
   DEFAULT_DB_RANGE,
   DEFAULT_FFT_SIZE,
   DEFAULT_FREQ_LIMIT,
+  DEFAULT_PANE_LAYOUT,
   DEFAULT_TIME_ZOOM,
   FFT_SIZES,
   type FftSize,
   FREQ_LIMITS,
+  PANE_LAYOUTS,
+  type PaneLayout,
   TIME_ZOOMS,
 } from "../config";
 
@@ -30,6 +33,7 @@ export interface Settings {
   dbRange: number;
   a4: number;
   pitchEnabled: boolean;
+  paneLayout: PaneLayout;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -41,6 +45,7 @@ export const DEFAULT_SETTINGS: Settings = {
   dbRange: DEFAULT_DB_RANGE,
   a4: DEFAULT_A4,
   pitchEnabled: true,
+  paneLayout: DEFAULT_PANE_LAYOUT,
 };
 
 function oneOf<T>(value: unknown, allowed: readonly T[], fallback: T): T {
@@ -110,6 +115,7 @@ export function loadSettings(storage: Storage | null = defaultStorage()): Settin
     a4: oneOf(o.a4, A4_OPTIONS, DEFAULT_SETTINGS.a4),
     pitchEnabled:
       typeof o.pitchEnabled === "boolean" ? o.pitchEnabled : DEFAULT_SETTINGS.pitchEnabled,
+    paneLayout: oneOf(o.paneLayout, PANE_LAYOUTS, DEFAULT_SETTINGS.paneLayout),
   };
 }
 

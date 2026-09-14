@@ -38,6 +38,19 @@ export const TIME_ZOOMS = [0.5, 1, 2, 4] as const;
 export const DEFAULT_TIME_ZOOM = 1;
 
 /**
+ * How the two comparison panes are arranged.
+ *
+ * Neither direction dominates. Stacked puts the same frequency at the same
+ * screen height in both panes, so a pitch or formant difference is read
+ * directly — the better default. Side by side gives each pane full height at
+ * the cost of showing half as much time, and is the only usable choice on a
+ * short landscape window. Hence a setting.
+ */
+export const PANE_LAYOUTS = ["stacked", "columns"] as const;
+export type PaneLayout = (typeof PANE_LAYOUTS)[number];
+export const DEFAULT_PANE_LAYOUT: PaneLayout = "stacked";
+
+/**
  * Selectable colormaps. The name list lives here with the other user-facing
  * option lists so settings validation does not have to reach into `render/`;
  * the lookup tables themselves stay in `render/colormap.ts`.

@@ -44,6 +44,19 @@ test("repairs individual invalid fields, keeping valid ones", () => {
   expect(loaded.timeZoom).toBe(2);
 });
 
+test("repairs an unknown pane layout", () => {
+  const stored = JSON.stringify({ paneLayout: "diagonal", a4: 442 });
+  const loaded = loadSettings(memoryStorage({ [SETTINGS_KEY]: stored }));
+  expect(loaded.paneLayout).toBe(DEFAULT_SETTINGS.paneLayout);
+  expect(loaded.a4).toBe(442);
+});
+
+test("round-trips a pane layout", () => {
+  const storage = memoryStorage();
+  saveSettings({ ...DEFAULT_SETTINGS, paneLayout: "columns" }, storage);
+  expect(loadSettings(storage).paneLayout).toBe("columns");
+});
+
 test("clamps out-of-range dB settings", () => {
   const stored = JSON.stringify({ dbFloor: -900, dbRange: 0 });
   const loaded = loadSettings(memoryStorage({ [SETTINGS_KEY]: stored }));
