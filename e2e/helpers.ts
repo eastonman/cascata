@@ -16,6 +16,7 @@ export async function importFixture(page: Page, paneIndex = 0): Promise<void> {
 /** Waits for the analysis backlog to drain, so the canvas is fully painted. */
 export async function waitForAnalysis(page: Page): Promise<void> {
   await expect(page.locator("#status")).not.toContainText("Analysing", { timeout: 30_000 });
+  await settle(page);
 }
 
 export interface CanvasStats {
@@ -33,6 +34,26 @@ export interface CanvasStats {
   fingerprint: number;
   width: number;
   height: number;
+}
+
+/**
+ * Waits for the draw loop to actually repaint.
+ *
+ * Nothing in the app paints synchronously: a colormap change only invalidates
+ * the offscreen ring, and the status bar stops saying "Analysing" in the same
+ * tick that draws the last columns. Sampling without this reads the frame
+ * before the one under test.
+ */
+export async function settle(page: Page, frames = 3): Promise<void> {
+  await page.evaluate(
+    (n) =>
+      new Promise<void>((resolve) => {
+        let left = n;
+        const tick = () => (left-- > 0 ? requestAnimationFrame(tick) : resolve());
+        requestAnimationFrame(tick);
+      }),
+    frames,
+  );
 }
 
 /**

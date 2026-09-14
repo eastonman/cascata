@@ -102,8 +102,14 @@ audio — changing one never costs you what you have already sung.
   time worse. Only affects columns drawn after the change.
 - **Max freq** — display ceiling, 2 / 5 / 8 / 12 kHz. Crops the view; the data
   above it is still stored.
-- **Colors** — magma, viridis, or gray. The first two are perceptually uniform,
-  so a step in dB reads as the same step in brightness anywhere in the range.
+- **Colors** — magma, viridis, turbo, or gray. The first two are perceptually
+  uniform, so a step in dB reads as the same step in brightness anywhere in the
+  range. **turbo** is Google's rainbow, blue through green to red: much more
+  contrast, because a partial separates from the noise floor by hue as well as
+  brightness. The cost is that it is dark at *both* ends — the quietest and
+  loudest bins have nearly the same brightness and differ only in hue, which
+  also makes them ambiguous in greyscale and to achromatopsia. Use it to find
+  things; switch to magma to judge how loud they are.
 - **Zoom** — 0.5× to 4× horizontal.
 - **Floor** / **Range** — the dB window mapped onto the colormap. Lower the
   floor to see quiet detail, raise it to cut room noise.

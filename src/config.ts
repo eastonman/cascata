@@ -55,9 +55,19 @@ export const DEFAULT_PANE_LAYOUT: PaneLayout = "stacked";
  * option lists so settings validation does not have to reach into `render/`;
  * the lookup tables themselves stay in `render/colormap.ts`.
  */
-export const COLORMAP_NAMES = ["magma", "viridis", "gray"] as const;
+export const COLORMAP_NAMES = ["magma", "viridis", "turbo", "gray"] as const;
 export type ColormapName = (typeof COLORMAP_NAMES)[number];
 export const DEFAULT_COLORMAP: ColormapName = "magma";
+
+/**
+ * The maps that promise perceptually uniform intensity, and are tested for it.
+ *
+ * Declared here rather than repeated as literals inside the tests, so that
+ * adding a map forces a decision about which group it joins. `turbo` is
+ * deliberately not in this list: it trades uniformity for contrast, which is
+ * the whole reason it exists.
+ */
+export const PERCEPTUAL_COLORMAPS = ["magma", "viridis"] as const;
 
 /** Colouring maps [DEFAULT_DB_FLOOR, DEFAULT_DB_FLOOR + DEFAULT_DB_RANGE] dBFS onto the colormap. */
 export const DEFAULT_DB_FLOOR = -92;

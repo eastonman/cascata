@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { FIXTURE_SECONDS } from "./fixture";
-import { canvasStats, importFixture, paneCanvas, waitForAnalysis } from "./helpers";
+import { canvasStats, importFixture, paneCanvas, settle, waitForAnalysis } from "./helpers";
 
 test("importing a file paints the waterfall", async ({ page }) => {
   await page.goto("/");
@@ -133,4 +133,37 @@ test("export produces a wav whose size matches the imported audio", async ({ pag
   // rate is not necessarily 48 kHz, so allow the plausible range.
   expect(bytes).toBeGreaterThan(44 + FIXTURE_SECONDS * 16000 * 2);
   expect(bytes).toBeLessThan(44 + FIXTURE_SECONDS * 48000 * 2 + 4096);
+});
+
+test("the turbo colormap renders in blue and green where magma does not", async ({ page }) => {
+  await page.goto("/");
+  await importFixture(page);
+  await waitForAnalysis(page);
+
+  const hueMix = () =>
+    paneCanvas(page).evaluate((el: HTMLCanvasElement) => {
+      const ctx = el.getContext("2d");
+      if (!ctx) throw new Error("no 2d context");
+      const { width, height } = el;
+      const data = ctx.getImageData(0, 0, width, height).data;
+      let green = 0;
+      let blue = 0;
+      for (let i = 0; i < data.length; i += 4 * 7) {
+        const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
+        if (r + g + b < 60) continue; // colormap floor
+        if (g > r * 1.5 && g > b * 1.5) green++;
+        if (b > r * 1.5 && b > g * 1.5) blue++;
+      }
+      return { green, blue };
+    });
+
+  const magma = await hueMix();
+  await page.getByLabel("Colors").selectOption("turbo");
+  await settle(page);
+  const turbo = await hueMix();
+
+  // magma runs black-purple-orange-white: no green at all, and its purple is
+  // never blue-dominant by this margin.
+  expect(turbo.green).toBeGreaterThan(magma.green + 50);
+  expect(turbo.blue).toBeGreaterThan(magma.blue + 50);
 });
