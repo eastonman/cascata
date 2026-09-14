@@ -116,6 +116,14 @@ Each of these must apply without a visible stall and without disturbing already-
 - [ ] **Pitch** checkbox shows/hides the YIN curve. Columns recorded while it was off stay blank when it is turned back on — they were never analysed.
 - [ ] All settings survive a page reload.
 
+## Mouse wheel
+
+- [ ] Scrolling the wheel over the canvas pans the waterfall through time, and pins the view.
+- [ ] On a trackpad, a two-finger horizontal swipe pans as well as a vertical one.
+- [ ] The page itself never scrolls, and the canvas does not drift out from under the pointer.
+- [ ] With `Link` on, scrolling one pane moves both.
+- [ ] Ctrl/Cmd + wheel still zooms the browser, rather than being swallowed.
+
 ## Pitch curve
 
 - [ ] A steady sung note produces a steady line at the right pitch.

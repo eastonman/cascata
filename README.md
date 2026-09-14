@@ -18,12 +18,12 @@ colour. A YIN-derived pitch curve is overlaid on top.
 | Action | How |
 |---|---|
 | Start / stop capture | **Record** |
-| Look back through history | Drag the canvas. Recording continues while you browse. |
+| Look back through history | Drag the canvas, or scroll the wheel. Recording continues while you browse. |
 | Return to the live edge | **Follow** |
 | Set the playback cursor | Click (or tap) the canvas |
 | Play from the cursor | **Play**, or <kbd>Space</kbd> |
 | Stop playback | <kbd>Esc</kbd> |
-| Pan | <kbd>←</kbd> / <kbd>→</kbd>, hold <kbd>Shift</kbd> to go faster |
+| Pan | <kbd>←</kbd> / <kbd>→</kbd>, hold <kbd>Shift</kbd> to go faster, or the mouse wheel |
 | Read a point | Hover for time, frequency, note ± cents, and level |
 | Load an audio file | **Import**, in the pane's header |
 | Throw away a pane's audio | **Clear**, in the pane's header |

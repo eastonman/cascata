@@ -57,14 +57,23 @@ export async function settle(page: Page, frames = 3): Promise<void> {
 }
 
 /**
- * Parks the pointer off the canvases before sampling.
+ * Gets the page ready to be sampled: pointer away, last frame drawn.
  *
- * The crosshair follows the mouse and is redrawn every frame, so a pointer
- * left over a pane makes every fingerprint differ for the wrong reason.
+ * Two separate hazards, both of which produced intermittent failures:
+ * the crosshair follows the mouse and is redrawn every frame, so a pointer
+ * left over a pane makes every fingerprint differ for the wrong reason; and
+ * an interaction only mutates state, with the repaint deferred to the next
+ * animation frame, so sampling straight after a wheel or a drag reads the
+ * frame before the one under test.
+ *
+ * The frame wait also lives in canvasStats, so a sample can never be taken
+ * without one. This exists for the pointer, and for the cases that want the
+ * crosshair gone before anything else happens.
  */
 export async function restPointer(page: Page): Promise<void> {
   await page.mouse.move(5, 5);
   await page.locator("#status").hover().catch(() => {});
+  await settle(page);
 }
 
 /**
@@ -74,8 +83,14 @@ export async function restPointer(page: Page): Promise<void> {
  * colours depend on the device sample rate and on font rendering in the
  * overlay, so a reference image would be brittle across machines while telling
  * us less. What matters is whether anything was drawn and roughly where.
+ *
+ * Waits for a frame first. Nothing in the app paints synchronously, so an
+ * interaction leaves the canvas showing the previous frame until the draw loop
+ * runs; sampling without this is a race that a call site can lose without
+ * ever being wrong about anything else.
  */
 export async function canvasStats(canvas: Locator): Promise<CanvasStats> {
+  await settle(canvas.page());
   return canvas.evaluate((el: HTMLCanvasElement) => {
     const ctx = el.getContext("2d");
     if (!ctx) throw new Error("no 2d context");

@@ -19,6 +19,7 @@ import { WaterfallRenderer } from "../render/waterfall";
 import type { ColumnStore } from "../store/columnStore";
 import { PaneModel } from "./paneModel";
 import type { ViewState } from "./viewState";
+import { wheelPanPixels } from "./wheel";
 
 /** Pointer movement past this is a drag, below it a tap that sets the cursor. */
 const DRAG_THRESHOLD_PX = 4;
@@ -449,6 +450,24 @@ export class Pane {
     this.canvas.addEventListener("pointerleave", () => {
       this.hover = null;
     });
+
+    // passive: false, because this has to preventDefault. Wheel listeners are
+    // passive by default in every current browser, and without the flag the
+    // call is ignored with a console warning and the page scrolls underneath.
+    this.canvas.addEventListener(
+      "wheel",
+      (e) => {
+        // Modifier-held wheel is the browser's zoom gesture; leave it alone
+        // rather than swallowing it to do something else.
+        if (e.ctrlKey || e.metaKey) return;
+        e.preventDefault();
+        this.callbacks.onActivate(this);
+        // Same path as a drag, so a linked pane mirrors the movement.
+        this.model.viewState?.panPixels(wheelPanPixels(e, this.cssWidth));
+        this.callbacks.onViewChanged(this);
+      },
+      { passive: false },
+    );
   }
 }
 
