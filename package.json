@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && bun run scripts/check-bundle-size.ts",
     "preview": "vite preview",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "format": "biome format --write .",
     "lint": "biome lint .",
-    "check": "biome check ."
+    "check": "biome check .",
+    "size": "bun run scripts/check-bundle-size.ts"
   },
   "devDependencies": {
     "typescript": "^5.9.0",
