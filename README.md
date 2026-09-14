@@ -193,9 +193,8 @@ time grid, the WAV header, settings validation, and the view-state interaction
 rules, and the pane-linking maths. 137 tests.
 
 Rendering and interaction are **not** covered automatically. There is a manual
-checklist for them; ask for `docs/manual-verification.md` if you do not have it
-(it is deliberately untracked). Run it in both Chrome and Safari before
-shipping — Safari is the WebKit baseline that a future desktop build would use,
+checklist for them in [docs/manual-verification.md](docs/manual-verification.md).
+Run it in both Chrome and Safari before shipping — Safari is the WebKit baseline that a future desktop build would use,
 so a Chrome-only pass proves nothing about that target.
 
 ### Contributing
@@ -205,4 +204,6 @@ agreements this repo expects.
 
 ## License
 
-Not yet chosen.
+[GNU AGPL v3](LICENSE). If you run a modified version of Cascata as a network
+service, that licence requires you to offer its source to users of that
+service.

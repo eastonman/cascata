@@ -4,7 +4,8 @@ dist/
 result
 .DS_Store
 
-# Design and planning docs are intentionally untracked
+# Design and planning notes are intentionally untracked.
+# docs/manual-verification.md is NOT here on purpose: it is the only thing
+# guarding the rendering and interaction code, so it has to ship with it.
 DESIGN.md
 docs/superpowers/
-docs/manual-verification.md
