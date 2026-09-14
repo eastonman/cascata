@@ -24,14 +24,20 @@ jobs:
           - browser: chromium
             os: ubuntu-latest
             install: --with-deps chromium
+            projects: --project=chromium
           # WebKit runs on macOS, and not only because the Linux build fights
           # the runner. We test WebKit because of Safari, and Linux WebKit is
           # the GTK port -- a different engine build from the one Safari ships.
           # Playwright's macOS WebKit is built on Apple's, so this is closer to
           # the thing DESIGN.md 2.3 actually names as the baseline.
+          #
+          # The emulated phone rides along here rather than claiming a third
+          # runner: devices["iPhone 14"] is WebKit, so this machine already has
+          # the browser it needs, and macOS minutes bill at ten times Linux.
           - browser: webkit
             os: macos-latest
             install: webkit
+            projects: --project=webkit --project=mobile
 
     steps:
       - uses: actions/checkout@v7
@@ -46,7 +52,7 @@ jobs:
         run: nix develop --command bun run browser:check ${{ matrix.browser }}
 
       - name: Run ${{ matrix.browser }}
-        run: nix develop --command bun run e2e --project=${{ matrix.browser }}
+        run: nix develop --command bun run e2e ${{ matrix.projects }}
 
       - uses: actions/upload-artifact@v7
         if: failure()

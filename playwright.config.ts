@@ -50,6 +50,7 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      testIgnore: /mobile\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         launchOptions: {
@@ -65,7 +66,16 @@ export default defineConfig({
     },
     {
       name: "webkit",
+      testIgnore: /mobile\.spec\.ts/,
       use: { ...devices["Desktop Safari"] },
+    },
+    // A phone is a different app: half the height, touch instead of a pointer,
+    // and a control bar that has to wrap rather than overflow. Emulated rather
+    // than asserted about in prose, which is what the checklist was doing.
+    {
+      name: "mobile",
+      testMatch: /mobile\.spec\.ts/,
+      use: { ...devices["iPhone 14"] },
     },
   ],
 });
