@@ -213,3 +213,30 @@ test("the cursor skips forward past PCM that was already evicted", () => {
     expect(peak).toBeGreaterThan(-60);
   }
 });
+
+test("producibleColumns excludes the columns the lookahead makes unreachable", () => {
+  const { pcm, analyzer } = setup();
+  pcm.write(tone(SR, 440));
+
+  // floor(writeIndex / HOP) would claim 46; the lookahead makes the last few
+  // unreachable, and treating that ratio as the target leaves a backlog that
+  // never drains.
+  expect(analyzer.producibleColumns).toBeLessThan(Math.floor(SR / HOP));
+  analyzer.pump(100000);
+  expect(analyzer.cursor).toBe(analyzer.producibleColumns);
+});
+
+test("producibleColumns is zero before any lookahead exists", () => {
+  const { pcm, analyzer } = setup();
+  pcm.write(new Float32Array(HOP));
+  expect(analyzer.producibleColumns).toBe(0);
+  expect(analyzer.pump()).toBe(0);
+});
+
+test("a longer window makes fewer columns producible from the same audio", () => {
+  const { pcm, analyzer } = setup();
+  pcm.write(tone(SR, 440));
+  const at4096 = analyzer.producibleColumns;
+  analyzer.setFftSize(8192);
+  expect(analyzer.producibleColumns).toBeLessThan(at4096);
+});

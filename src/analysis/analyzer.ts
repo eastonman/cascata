@@ -62,6 +62,26 @@ export class Analyzer {
     return this.cursorCol;
   }
 
+  /**
+   * Samples that must exist past a column's centre before it can be produced.
+   * YIN reads from -windowSize/2 forward across the longest period searched.
+   */
+  private get lookahead(): number {
+    return Math.max(this.size / 2, this.yin.windowSize / 2 + this.yin.tauMax);
+  }
+
+  /**
+   * How many columns the cursor can reach with the PCM currently written.
+   *
+   * Not `writeIndex / HOP`: the lookahead means the last few columns of any
+   * buffer are never producible, so treating that ratio as the target leaves a
+   * permanent backlog — progress that sticks below 100% and a pane that keeps
+   * claiming a share of the frame budget after it has finished.
+   */
+  get producibleColumns(): number {
+    return Math.max(0, Math.floor((this.pcm.writeIndex - this.lookahead) / HOP) + 1);
+  }
+
   get fftSize(): FftSize {
     return this.size;
   }
@@ -99,9 +119,7 @@ export class Analyzer {
   pump(maxColumns: number = DEFAULT_MAX_COLUMNS): number {
     const kernel = this.kernel();
     const halfWindow = this.size / 2;
-    // YIN reads from -windowSize/2 forward across the longest period searched.
-    const yinLead = this.yin.windowSize / 2 + this.yin.tauMax;
-    const lookahead = Math.max(halfWindow, yinLead);
+    const lookahead = this.lookahead;
 
     // Skip forward over any span whose PCM has already been overwritten.
     // Without this, a tab hidden for ten minutes (rAF pauses, but the capture

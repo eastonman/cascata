@@ -1,4 +1,3 @@
-import { Analyzer } from "../analysis/analyzer";
 import { BIN_COUNT, F_MAX, F_MIN, HOP } from "../config";
 import { freqToBin } from "../dsp/logBins";
 import type { Settings } from "../platform/settings";
@@ -17,9 +16,9 @@ import {
   yToFreq,
 } from "../render/overlay";
 import { WaterfallRenderer } from "../render/waterfall";
-import { ColumnStore } from "../store/columnStore";
-import { PcmRing } from "../store/pcmRing";
-import { ViewState } from "./viewState";
+import type { ColumnStore } from "../store/columnStore";
+import { PaneModel } from "./paneModel";
+import type { ViewState } from "./viewState";
 
 /** Pointer movement past this is a drag, below it a tap that sets the cursor. */
 const DRAG_THRESHOLD_PX = 4;
@@ -66,17 +65,12 @@ export class Pane {
   private readonly waterfall: WaterfallRenderer;
   private readonly callbacks: PaneCallbacks;
 
-  private pcm: PcmRing | null = null;
-  private columns: ColumnStore | null = null;
-  private analyzer: Analyzer | null = null;
-  private view: ViewState | null = null;
+  /** Everything about this pane that is not DOM. Tested directly; see paneModel.test.ts. */
+  readonly model = new PaneModel();
 
-  private sampleRateHz = 0;
-  private capacitySec = 0;
   private maxBin = 0;
   private cssWidth = 0;
   private cssHeight = 0;
-  private cursorColValue: number | null = null;
   private hover: { x: number; y: number } | null = null;
   private pointer: { id: number; lastX: number; totalMovement: number } | null = null;
   /** Last values written to the header, so the draw loop does not rewrite them 60x/s. */
@@ -165,118 +159,89 @@ export class Pane {
   // --- state ---------------------------------------------------------------
 
   get hasData(): boolean {
-    return (this.pcm?.writeIndex ?? 0) > 0;
+    return this.model.hasData;
   }
 
   get sampleRate(): number {
-    return this.sampleRateHz;
+    return this.model.sampleRate;
   }
 
   get capacitySeconds(): number {
-    return this.capacitySec;
+    return this.model.capacitySeconds;
   }
 
   get viewState(): ViewState | null {
-    return this.view;
+    return this.model.viewState;
   }
 
   get cursorCol(): number | null {
-    return this.cursorColValue;
+    return this.model.cursorCol;
   }
 
   get pcmRange(): { earliest: number; writeIndex: number } | null {
-    return this.pcm ? { earliest: this.pcm.earliestIndex, writeIndex: this.pcm.writeIndex } : null;
+    return this.model.pcmRange;
   }
 
-  /** Columns of analysis still owed, used to split the frame budget and report progress. */
   get backlogColumns(): number {
-    if (!this.analyzer || !this.pcm) return 0;
-    return Math.max(0, Math.floor(this.pcm.writeIndex / HOP) - this.analyzer.cursor);
+    return this.model.backlogColumns;
+  }
+
+  get analysisProgress(): number {
+    return this.model.analysisProgress;
   }
 
   // --- lifecycle -----------------------------------------------------------
 
   build(sampleRate: number, capacitySeconds: number, settings: Settings): void {
-    this.sampleRateHz = sampleRate;
-    this.capacitySec = capacitySeconds;
-
-    const capacity = Math.ceil(capacitySeconds * sampleRate);
-    this.pcm = new PcmRing(capacity);
-    this.columns = new ColumnStore(Math.ceil(capacity / HOP), BIN_COUNT);
-    this.analyzer = new Analyzer({ sampleRate, pcm: this.pcm, columns: this.columns });
-    this.analyzer.setFftSize(settings.fftSize);
-    this.analyzer.setPitchEnabled(settings.pitchEnabled);
-
-    this.view = new ViewState({ sampleRate });
-    this.view.pxPerCol = settings.timeZoom;
-    this.view.widthPx = this.cssWidth;
-
+    this.model.build(sampleRate, capacitySeconds, settings, this.cssWidth);
     this.waterfall.invalidate();
   }
 
   writeSamples(chunk: Float32Array): void {
-    this.pcm?.write(chunk);
+    this.model.writeSamples(chunk);
   }
 
   /** Reads float samples out of the ring, for playback and for export sizing. */
   fillSamples(startSample: number, channel: Float32Array): void {
-    this.pcm?.read(startSample, channel);
+    this.model.fillSamples(startSample, channel);
   }
 
   readInt16(startSample: number, count: number): Int16Array | null {
-    return this.pcm?.readInt16(startSample, count) ?? null;
+    return this.model.readInt16(startSample, count);
   }
 
   /** Advances analysis for at most `budgetMs`. Returns columns produced. */
   pump(budgetMs: number): number {
-    const analyzer = this.analyzer;
-    if (!analyzer) return 0;
-    const deadline = performance.now() + budgetMs;
-    let produced = 0;
-    do {
-      const n = analyzer.pump(64);
-      if (n === 0) break;
-      produced += n;
-    } while (performance.now() < deadline);
-    return produced;
+    return this.model.pump(budgetMs);
   }
 
   clear(): void {
-    this.pcm?.clear();
-    this.analyzer?.reset();
+    this.model.clear();
     this.waterfall.invalidate();
-    this.cursorColValue = null;
-    this.view?.follow();
     this.shownHasData = null;
     this.refreshHeader();
   }
 
   /** Places the play cursor, e.g. after switching panes mid-playback. */
   showCursorAt(col: number): void {
-    this.cursorColValue = Math.max(0, col);
+    this.model.showCursorAt(col);
   }
 
-  /** Pins the view to the very start, for an import that should be read from its beginning. */
   showFromStart(latestCol: number): void {
-    if (!this.view) return;
-    this.view.setEarliest(0);
-    this.view.setLatest(latestCol);
-    this.view.panColumns(-Number.MAX_SAFE_INTEGER);
-    this.cursorColValue = 0;
+    this.model.showFromStart(latestCol);
   }
 
   // --- settings and layout -------------------------------------------------
 
   applySettings(patch: Partial<Settings>, settings: Settings): void {
-    if (patch.fftSize !== undefined) this.analyzer?.setFftSize(patch.fftSize);
-    if (patch.pitchEnabled !== undefined) this.analyzer?.setPitchEnabled(patch.pitchEnabled);
+    this.model.applyAnalysisSettings(patch);
     if (patch.colormap !== undefined) this.waterfall.setColormap(patch.colormap);
     if (patch.dbFloor !== undefined || patch.dbRange !== undefined) {
       this.waterfall.setDbRange(settings.dbFloor, settings.dbRange);
     }
-    if (patch.timeZoom !== undefined && this.view) {
-      this.view.pxPerCol = patch.timeZoom;
-      this.waterfall.ensureSlots(this.view.visibleCols);
+    if (patch.timeZoom !== undefined) {
+      const view = this.model.viewState;
+      if (view) this.waterfall.ensureSlots(view.visibleCols);
       this.waterfall.invalidate();
     }
     if (patch.freqLimit !== undefined) this.maxBin = computeMaxBin(settings);
@@ -301,10 +266,9 @@ export class Pane {
     this.cssWidth = w;
     this.cssHeight = h;
 
-    if (this.view) {
-      this.view.widthPx = w;
-      this.waterfall.ensureSlots(this.view.visibleCols);
-    }
+    this.model.setViewWidth(w);
+    const view = this.model.viewState;
+    if (view) this.waterfall.ensureSlots(view.visibleCols);
     return true;
   }
 
@@ -328,9 +292,8 @@ export class Pane {
       this.hint.hidden = has;
     }
 
-    const samples = this.pcm ? this.pcm.writeIndex - this.pcm.earliestIndex : 0;
-    const duration =
-      samples > 0 && this.sampleRateHz > 0 ? formatClock(samples / this.sampleRateHz) : "";
+    const seconds = this.model.durationSeconds;
+    const duration = seconds > 0 ? formatClock(seconds) : "";
     if (duration !== this.shownDuration) {
       this.shownDuration = duration;
       this.durationEl.textContent = duration;
@@ -341,15 +304,17 @@ export class Pane {
 
   /** Column under a client-space x, or null when this pane has no view yet. */
   colAtClientX(clientX: number): number | null {
-    if (!this.view) return null;
+    const view = this.model.viewState;
+    if (!view) return null;
     const rect = this.canvas.getBoundingClientRect();
-    return this.view.xToCol(clientX - rect.left);
+    return view.xToCol(clientX - rect.left);
   }
 
   /** Column the pointer is over, for the other pane's ghost cursor. */
   get hoveredCol(): number | null {
-    if (!this.hover || !this.view) return null;
-    return this.view.xToCol(this.hover.x);
+    const view = this.model.viewState;
+    if (!this.hover || !view) return null;
+    return view.xToCol(this.hover.x);
   }
 
   // --- drawing -------------------------------------------------------------
@@ -364,11 +329,11 @@ export class Pane {
     this.ctx.fillStyle = "#000";
     this.ctx.fillRect(0, 0, w, h);
 
-    const { view, columns } = this;
+    const view = this.model.viewState;
+    const columns = this.model.columns;
     if (!view || !columns) return;
 
-    view.setLatest(columns.writeIndex);
-    view.setEarliest(columns.earliestIndex);
+    this.model.syncViewBounds();
 
     const startCol = view.startCol;
     const endCol = view.endCol;
@@ -397,23 +362,25 @@ export class Pane {
       fMax: F_MAX,
       a4: settings.a4,
       hop: HOP,
-      sampleRate: this.sampleRateHz,
+      sampleRate: this.model.sampleRate,
     };
 
     drawNoteRuler(this.ctx, geo);
     drawTimeAxis(this.ctx, geo);
     if (settings.pitchEnabled) drawPitchCurve(this.ctx, geo, columns);
     if (opts.ghostCol !== null) drawGhostCursor(this.ctx, geo, opts.ghostCol);
-    if (this.cursorColValue !== null) drawPlayCursor(this.ctx, geo, this.cursorColValue);
+    const cursor = this.model.cursorCol;
+    if (cursor !== null) drawPlayCursor(this.ctx, geo, cursor);
     if (opts.playheadCol !== null) drawPlayhead(this.ctx, geo, opts.playheadCol);
     this.drawHover(geo, columns, settings);
   }
 
   private drawHover(geo: OverlayGeometry, columns: ColumnStore, settings: Settings): void {
     const hover = this.hover;
-    if (!hover || !this.view) return;
+    const view = this.model.viewState;
+    if (!hover || !view) return;
 
-    const col = this.view.xToCol(hover.x);
+    const col = view.xToCol(hover.x);
     const freq = yToFreq(hover.y, geo);
     const stored = columns.columnView(col);
     // yToFreq exponentiates the bin position, so converting the frequency back
@@ -426,7 +393,7 @@ export class Pane {
       geo,
       hover.x,
       hover.y,
-      formatReadout({ timeSec: this.view.colToTime(col), freq, db, a4: settings.a4 }),
+      formatReadout({ timeSec: view.colToTime(col), freq, db, a4: settings.a4 }),
     );
   }
 
@@ -449,7 +416,7 @@ export class Pane {
       p.lastX = e.clientX;
       p.totalMovement += Math.abs(dx);
       if (p.totalMovement > DRAG_THRESHOLD_PX) {
-        this.view?.panPixels(dx);
+        this.model.viewState?.panPixels(dx);
         this.callbacks.onViewChanged(this);
       }
     });
@@ -460,7 +427,7 @@ export class Pane {
       this.pointer = null;
       if (p.totalMovement <= DRAG_THRESHOLD_PX) {
         const col = this.colAtClientX(e.clientX);
-        if (col !== null) this.cursorColValue = col;
+        if (col !== null) this.model.showCursorAt(col);
       }
     };
     this.canvas.addEventListener("pointerup", endPointer);
