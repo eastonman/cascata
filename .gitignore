@@ -1,5 +1,8 @@
 node_modules/
 dist/
+e2e/.fixtures/
+test-results/
+playwright-report/
 .direnv/
 result
 .DS_Store

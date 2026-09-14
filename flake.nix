@@ -18,6 +18,8 @@
           # package.json must be bumped in the same commit.
           PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
+          # The store is read-only, so a download would fail anyway.
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
 
           shellHook = ''
             echo "cascata dev shell: bun $(bun --version), node $(node --version)"
