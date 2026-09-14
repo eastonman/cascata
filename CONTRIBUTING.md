@@ -20,25 +20,30 @@ up minutes or hours into a session.
 ## Before you open a pull request
 
 ```sh
-bun run check && bun run typecheck && bun test && bun run build
+bun run check && bun run typecheck && bun run test && bun run build && bun run e2e
 ```
 
-CI runs exactly these four, resolved through the flake so it cannot drift from
-your dev shell. It takes about 40 seconds.
+CI runs exactly these five, resolved through the flake so they cannot drift
+from your dev shell.
 
-**If you touched capture, rendering, or interaction, that is not enough.**
-Roughly 1,900 lines — `app.ts`, `pane.ts`, `controls.ts`, `waterfall.ts`,
-`webAudioSource.ts`, `player.ts` — have no unit tests, because they need a real
-canvas, a real microphone, and a real audio context. The substitute is
-[docs/manual-verification.md](docs/manual-verification.md). Run the sections
-your change touches, in **both Chrome and Safari**, and say in the PR which
-ones you ran.
+`bun run test` is the unit suite over the pure layers. `bun run e2e` drives the
+built app in Chromium and WebKit: it imports a generated fixture, checks the
+waterfall actually paints and that an octave lands higher on the frequency
+axis, exercises compare mode and linking, and — in Chromium, which can fake a
+capture device — records from a synthetic microphone.
 
-Safari is not optional. It is the WebKit baseline that a future desktop build
-would use, and several of the bugs found so far were Safari-only: a blocked
-`localStorage` that took the whole app down, an `AudioContext` stuck in
-WebKit's non-standard `"interrupted"` state, and the `data:` URL an AudioWorklet
-will not load from.
+WebKit is not optional, and it is why the browser suite exists. It is the
+baseline a future desktop build would use, and every Safari-only bug found so
+far was found by hand, late: a blocked `localStorage` that took the whole app
+down at boot, an `AudioContext` stuck in WebKit's non-standard `"interrupted"`
+state, and the `data:` URL an AudioWorklet will not load from.
+
+**Some things still have no automated cover**, and for those
+[docs/manual-verification.md](docs/manual-verification.md) remains the only
+guard: anything involving a real microphone in WebKit, audio you can actually
+hear, phone layout and touch, the screen wake lock, and the eight-minute ring
+wraparound. Run the sections your change touches and say in the PR which ones
+you ran.
 
 ## What makes a change easy to accept
 

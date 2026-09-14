@@ -146,12 +146,17 @@ With [direnv](https://direnv.net/), `direnv allow` loads the shell
 automatically — `.envrc` is already in the repo.
 
 ```sh
-bun test                    # unit tests
+bun run test                # unit tests over the pure layers
+bun run e2e                 # browser tests in Chromium and WebKit
+bun run e2e:ui              # the same, with Playwright's inspector
 bun run typecheck           # tsc --noEmit
 bun run check               # biome format + lint check
 bun run format              # biome format --write
-bun run build               # typecheck + production build to dist/
+bun run build               # typecheck, build to dist/, check the size budget
 ```
+
+The browsers come from the Nix flake, so there is no `playwright install` step
+and CI runs the same builds you do.
 
 ### Layout
 
@@ -188,14 +193,25 @@ anchors.
 
 ### Testing
 
-`bun test` covers the pure layers: DSP numerics, the stores, the analyzer's
-time grid, the WAV header, settings validation, and the view-state interaction
-rules, and the pane-linking maths. 137 tests.
+Two suites, because the code splits cleanly into what can be reasoned about and
+what has to be watched.
 
-Rendering and interaction are **not** covered automatically. There is a manual
-checklist for them in [docs/manual-verification.md](docs/manual-verification.md).
-Run it in both Chrome and Safari before shipping — Safari is the WebKit baseline that a future desktop build would use,
-so a Chrome-only pass proves nothing about that target.
+`bun run test` covers the pure layers: DSP numerics, the stores, the analyzer's
+time grid, the WAV header, settings validation, the view-state interaction
+rules, pane linking, and the pane model. 178 tests, no DOM.
+
+`bun run e2e` drives the built app in Chromium and WebKit through Playwright.
+It imports a generated fixture and checks that the waterfall paints, that an
+octave step lands higher on the log frequency axis, that a corrupt file leaves
+the previous audio intact, that compare mode and linking behave, and — in
+Chromium, using a fake capture device — that recording from a microphone
+actually works. 37 tests.
+
+What neither covers, and what
+[docs/manual-verification.md](docs/manual-verification.md) is still for:
+anything needing a real microphone under WebKit, audio you can hear rather than
+measure, phone layout and touch, the screen wake lock, and the eight-minute
+ring wraparound. Run it in both browsers before shipping.
 
 ### Contributing
 

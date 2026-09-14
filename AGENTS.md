@@ -112,7 +112,7 @@ Breaking these is easy and the resulting bugs are quiet.
 ## Before proposing a change as done
 
 ```sh
-bun run check && bun run typecheck && bun test && bun run build
+bun run check && bun run typecheck && bun run test && bun run build
 ```
 
 All four must be clean. If you touched capture, rendering, or interaction, say

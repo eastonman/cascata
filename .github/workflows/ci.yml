@@ -41,10 +41,24 @@ jobs:
         run: nix develop --command bun run typecheck
 
       - name: Test
-        run: nix develop --command bun test
+        run: nix develop --command bun run test
 
       - name: Build
         run: nix develop --command bun run build
+
+      # The browsers come from the flake, so there is no `playwright install`
+      # step and CI runs the same build as a laptop. WebKit is the point: it is
+      # the compatibility baseline in DESIGN.md 2.3, and every Safari-only bug
+      # so far was found by hand, late.
+      - name: Browser tests
+        run: nix develop --command bun run e2e
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
 
       - uses: actions/upload-artifact@v4
         with:
