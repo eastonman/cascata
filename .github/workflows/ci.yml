@@ -10,29 +10,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# The fast gate: everything that needs no browser. Kept as one job rather than
+# four, because each would pay the Nix setup again to save a second or two of
+# work -- the split that actually buys wall-clock time is browsers, and that
+# lives in e2e.yml running alongside this.
 jobs:
   check:
+    name: Lint, types, unit tests, build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # The flake is the source of truth for the toolchain, so CI resolves bun
-      # and node through it rather than pinning versions a second time here.
-      # No binary-cache action: cache.nixos.org already substitutes bun and
-      # node, and the two GitHub-Actions Nix caches have both been through an
-      # end-of-life and a revival. Add one if a cold `nix develop` gets slow.
-      - uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      - name: Show toolchain
-        run: nix develop --command bash -c 'bun --version && node --version'
-
-      # --frozen-lockfile: CI must fail on an out-of-date lockfile rather than
-      # silently resolving something different from what was committed.
-      - name: Install dependencies
-        run: nix develop --command bun install --frozen-lockfile
+      - uses: ./.github/actions/setup
 
       - name: Format and lint
         run: nix develop --command bun run check
@@ -40,25 +28,12 @@ jobs:
       - name: Typecheck
         run: nix develop --command bun run typecheck
 
-      - name: Test
+      - name: Unit tests
         run: nix develop --command bun run test
 
+      # Also enforces the bundle size budget.
       - name: Build
         run: nix develop --command bun run build
-
-      # The browsers come from the flake, so there is no `playwright install`
-      # step and CI runs the same build as a laptop. WebKit is the point: it is
-      # the compatibility baseline in DESIGN.md 2.3, and every Safari-only bug
-      # so far was found by hand, late.
-      - name: Browser tests
-        run: nix develop --command bun run e2e
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: playwright-report
-          path: playwright-report/
-          retention-days: 7
 
       - uses: actions/upload-artifact@v4
         with:

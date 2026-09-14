@@ -24,7 +24,14 @@ bun run check && bun run typecheck && bun run test && bun run build && bun run e
 ```
 
 CI runs exactly these five, resolved through the flake so they cannot drift
-from your dev shell.
+from your dev shell. They arrive as three parallel jobs rather than one
+sequence: **CI** (lint, types, unit tests, build) and **Browser tests** split
+again per engine, so a WebKit-only failure is named in the job title instead of
+buried in a combined log.
+
+The browser jobs do not wait on the fast one. A lint error and a WebKit
+regression are independent problems, and finding out about both in the same
+minute beats finding out about them one after the other.
 
 `bun run test` is the unit suite over the pure layers. `bun run e2e` drives the
 built app in Chromium and WebKit: it imports a generated fixture, checks the

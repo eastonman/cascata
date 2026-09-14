@@ -1,0 +1,23 @@
+name: Set up the dev shell
+description: >
+  Installs Nix and the project's dependencies. Every workflow resolves its
+  tools through the flake, so none of them pin a bun or node version a second
+  time and none can drift from a developer's shell.
+
+runs:
+  using: composite
+  steps:
+    - uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+
+    - name: Show toolchain
+      shell: bash
+      run: nix develop --command bash -c 'bun --version && node --version'
+
+    # --frozen-lockfile: CI must fail on an out-of-date lockfile rather than
+    # silently resolving something different from what was committed.
+    - name: Install dependencies
+      shell: bash
+      run: nix develop --command bun install --frozen-lockfile

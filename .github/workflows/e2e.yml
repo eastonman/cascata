@@ -1,0 +1,48 @@
+name: Browser tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: ${{ matrix.browser }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      # One engine failing is the interesting case, and it is usually WebKit.
+      # Cancelling the other run would hide whether the failure is specific to
+      # it or common to both.
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      # Browsers come from the flake, so there is no `playwright install` step
+      # and CI runs the same build as a laptop. WebKit is the reason this
+      # workflow exists: DESIGN.md 2.3 makes it the compatibility baseline, and
+      # every Safari-only bug so far was found by hand and late.
+      #
+      # Each engine is its own job rather than one run of both. They are the
+      # slowest thing in CI and entirely independent, so running them in
+      # parallel roughly halves the wait, and a failure names the engine in the
+      # job title instead of inside the log.
+      - name: Run ${{ matrix.browser }}
+        run: nix develop --command bun run e2e --project=${{ matrix.browser }}
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-${{ matrix.browser }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
