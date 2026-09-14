@@ -15,7 +15,7 @@ class CaptureProcessor extends AudioWorkletProcessor {
   }
 
   process(inputs) {
-    const ch = inputs[0] && inputs[0][0];
+    const ch = inputs[0]?.[0];
     if (!ch) return true;
     for (let i = 0; i < ch.length; i++) {
       this._buf[this._n++] = ch[i];
