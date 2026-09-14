@@ -83,6 +83,7 @@ export class Pane {
 
     this.root = document.createElement("div");
     this.root.className = "pane";
+    this.root.dataset.pane = label;
 
     const header = document.createElement("div");
     header.className = "pane-header";
@@ -93,7 +94,9 @@ export class Pane {
 
     this.armDot = document.createElement("button");
     this.armDot.className = "arm";
-    this.armDot.title = "Record into this pane";
+    this.armDot.title = `Record into pane ${label}`;
+    // A bare circle has no text to announce; title is a tooltip, not a name.
+    this.armDot.setAttribute("aria-label", `Record into pane ${label}`);
     this.armDot.addEventListener("click", () => {
       this.armDot.blur();
       callbacks.onArm(this);
@@ -112,6 +115,7 @@ export class Pane {
 
     this.importBtn = document.createElement("button");
     this.importBtn.textContent = "Import";
+    this.importBtn.setAttribute("aria-label", `Import audio into pane ${label}`);
     this.importBtn.addEventListener("click", () => {
       this.importBtn.blur();
       this.fileInput.click();
@@ -119,6 +123,7 @@ export class Pane {
 
     this.clearBtn = document.createElement("button");
     this.clearBtn.textContent = "Clear";
+    this.clearBtn.setAttribute("aria-label", `Clear pane ${label}`);
     this.clearBtn.disabled = true;
     this.clearBtn.addEventListener("click", () => {
       this.clearBtn.blur();
@@ -128,7 +133,16 @@ export class Pane {
     this.durationEl = document.createElement("span");
     this.durationEl.className = "pane-duration";
 
-    header.append(this.armDot, name, this.importBtn, this.clearBtn, this.durationEl);
+    // The input has to be in the document: click() on a detached file input
+    // does not reliably open the picker, which made Import a dead button.
+    header.append(
+      this.armDot,
+      name,
+      this.importBtn,
+      this.clearBtn,
+      this.fileInput,
+      this.durationEl,
+    );
 
     const stage = document.createElement("div");
     stage.className = "pane-stage";

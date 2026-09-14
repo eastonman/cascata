@@ -47,13 +47,13 @@ body {
   user-select: none;
 }
 
-#controls .group {
+#controls label.group {
   display: flex;
   align-items: center;
   gap: 5px;
 }
 
-#controls .group > span {
+#controls label.group > span {
   color: var(--muted);
   white-space: nowrap;
 }

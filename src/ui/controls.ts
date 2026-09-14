@@ -54,8 +54,17 @@ function onClick(button: HTMLButtonElement, handler: () => void): void {
   });
 }
 
-function group(label: string, control: HTMLElement): HTMLDivElement {
-  const wrap = el("div", { className: "group" });
+/**
+ * A labelled control.
+ *
+ * A real <label> wrapping the control, not a <span> beside it: wrapping
+ * associates the two implicitly, so a screen reader announces what the select
+ * is for, and a click on the text focuses it. It also gives the browser tests
+ * a stable handle -- addressing these by position broke the first time a
+ * control was inserted in the middle of the bar.
+ */
+function group(label: string, control: HTMLElement): HTMLLabelElement {
+  const wrap = el("label", { className: "group" });
   wrap.append(el("span", { textContent: label }), control);
   return wrap;
 }
@@ -130,6 +139,7 @@ export function createControls(
   // Import and Clear are per-pane and live in each pane's own header: in the
   // global bar they would each need a label saying which pane they act on.
   const compareBtn = el("button", { id: "compare", textContent: "Compare" });
+  compareBtn.title = "Show a second pane to compare against";
   onClick(compareBtn, () => handlers.onToggleCompare());
 
   const linkBtn = el("button", { id: "link", textContent: "Link" });
