@@ -139,6 +139,7 @@ everything else comes from the flake.
 ```sh
 nix develop                 # bun 1.3 + node 24
 bun install
+bun run browser:install     # Playwright's browsers, once, for `bun run e2e`
 bun run dev                 # http://localhost:5173
 ```
 
@@ -155,8 +156,10 @@ bun run format              # biome format --write
 bun run build               # typecheck, build to dist/, check the size budget
 ```
 
-The browsers come from the Nix flake, so there is no `playwright install` step
-and CI runs the same builds you do.
+Browser versions are pinned by the exact `@playwright/test` in `package.json`,
+so CI downloads the same builds you do. They do not come from the flake:
+nixpkgs' WebKit is broken on Linux, and one supplier everywhere beats a
+promise that holds on half the platforms.
 
 ### Layout
 

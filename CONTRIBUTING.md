@@ -39,6 +39,10 @@ waterfall actually paints and that an octave lands higher on the frequency
 axis, exercises compare mode and linking, and — in Chromium, which can fake a
 capture device — records from a synthetic microphone.
 
+WebKit runs on macOS in CI, and not only because the Linux build fights the
+runner: Linux WebKit is the GTK port, a different engine build from the one
+Safari ships, while Playwright's macOS WebKit is built on Apple's.
+
 WebKit is not optional, and it is why the browser suite exists. It is the
 baseline a future desktop build would use, and every Safari-only bug found so
 far was found by hand, late: a blocked `localStorage` that took the whole app

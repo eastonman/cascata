@@ -12,18 +12,24 @@
         default = pkgs.mkShell {
           packages = [ pkgs.bun pkgs.nodejs_24 ];
 
-          # Playwright refuses to run unless the browser build it finds matches
-          # the revision its npm package expects, so the two are pinned
-          # together: this driver version and the @playwright/test version in
-          # package.json must be bumped in the same commit.
-          PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
+          # Browsers come from `bun run browser:install`, not from the store.
+          # nixpkgs' webkit is broken on Linux -- its pw_run.sh cannot find the
+          # browser binary (NixOS/nixpkgs#507112) -- so "browsers from the
+          # flake" could only ever have been true on darwin, and one supplier
+          # everywhere beats a promise that holds on half the platforms. The
+          # revision is pinned either way: the exact @playwright/test version
+          # in package.json decides it.
+          #
+          # Playwright's own dependency check has to be off, though: it shells
+          # out to ldd, which inside this shell resolves against Nix's glibc and
+          # so reports every system library as missing -- libglib, libcairo,
+          # libexpat, all of them present. scripts/check-browser.ts replaces it
+          # by launching the browser for real, which cannot produce that kind of
+          # false negative.
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
-          # The store is read-only, so a download would fail anyway.
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
 
           shellHook = ''
             echo "cascata dev shell: bun $(bun --version), node $(node --version)"
-            echo "playwright browsers: ${pkgs.playwright-driver.version}"
           '';
         };
       });

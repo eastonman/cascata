@@ -12,7 +12,7 @@ concurrency:
 jobs:
   e2e:
     name: ${{ matrix.browser }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
 
     strategy:
       # One engine failing is the interesting case, and it is usually WebKit.
@@ -20,25 +20,35 @@ jobs:
       # it or common to both.
       fail-fast: false
       matrix:
-        browser: [chromium, webkit]
+        include:
+          - browser: chromium
+            os: ubuntu-latest
+            install: --with-deps chromium
+          # WebKit runs on macOS, and not only because the Linux build fights
+          # the runner. We test WebKit because of Safari, and Linux WebKit is
+          # the GTK port -- a different engine build from the one Safari ships.
+          # Playwright's macOS WebKit is built on Apple's, so this is closer to
+          # the thing DESIGN.md 2.3 actually names as the baseline.
+          - browser: webkit
+            os: macos-latest
+            install: webkit
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
 
-      # Browsers come from the flake, so there is no `playwright install` step
-      # and CI runs the same build as a laptop. WebKit is the reason this
-      # workflow exists: DESIGN.md 2.3 makes it the compatibility baseline, and
-      # every Safari-only bug so far was found by hand and late.
-      #
-      # Each engine is its own job rather than one run of both. They are the
-      # slowest thing in CI and entirely independent, so running them in
-      # parallel roughly halves the wait, and a failure names the engine in the
-      # job title instead of inside the log.
+      - name: Install ${{ matrix.browser }}
+        run: nix develop --command bun run browser:install ${{ matrix.install }}
+
+      # Fails in a minute with the real launch error, instead of every test
+      # timing out on newPage for ten minutes without saying why.
+      - name: Check ${{ matrix.browser }} starts
+        run: nix develop --command bun run browser:check ${{ matrix.browser }}
+
       - name: Run ${{ matrix.browser }}
         run: nix develop --command bun run e2e --project=${{ matrix.browser }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report-${{ matrix.browser }}

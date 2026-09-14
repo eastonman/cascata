@@ -27,7 +27,12 @@ export default defineConfig({
   reporter: process.env.CI ? [["github"], ["list"]] : [["list"]],
 
   use: {
-    baseURL: "http://localhost:4173",
+    // 127.0.0.1, not localhost. Vite's preview server binds IPv4 only, and
+    // WebKit resolves localhost to ::1 first -- so every navigation timed out
+    // under WebKit on Linux while Chromium, which falls back to IPv4, was
+    // fine. A literal address removes the ambiguity rather than depending on
+    // each engine's resolver order.
+    baseURL: "http://127.0.0.1:4173",
     trace: "on-first-retry",
     video: "off",
   },
@@ -36,8 +41,8 @@ export default defineConfig({
   // shows up after tree-shaking — the AudioWorklet inlined as a data: URL was
   // exactly that — is invisible against `vite dev`.
   webServer: {
-    command: "bun run build && bun run preview --port 4173 --strictPort",
-    url: "http://localhost:4173",
+    command: "bun run build && bun run preview --host 127.0.0.1 --port 4173 --strictPort",
+    url: "http://127.0.0.1:4173",
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
   },
