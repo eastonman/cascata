@@ -6,6 +6,7 @@ import {
   DB_RANGE_MIN,
   FFT_SIZES,
   FREQ_LIMITS,
+  PANE_LAYOUTS,
   TIME_ZOOMS,
 } from "../config";
 import type { Settings } from "../platform/settings";
@@ -16,8 +17,8 @@ export interface ControlHandlers {
   onTogglePlay(): void;
   onFollow(): void;
   onExport(): void;
-  onImport(file: File): void;
-  onClear(): void;
+  onToggleCompare(): void;
+  onToggleLink(): void;
   onSettingsChange(patch: Partial<Settings>): void;
 }
 
@@ -27,8 +28,9 @@ export interface ControlsHandle {
   setFollowState(following: boolean): void;
   setExportEnabled(enabled: boolean): void;
   setPlayEnabled(enabled: boolean): void;
-  setImportEnabled(enabled: boolean): void;
-  setClearEnabled(enabled: boolean): void;
+  setCompareState(on: boolean): void;
+  setLinkState(on: boolean): void;
+  setLinkAvailable(available: boolean): void;
   setStatus(text: string): void;
 }
 
@@ -125,22 +127,14 @@ export function createControls(
   const exportBtn = el("button", { id: "export", textContent: "Export WAV" });
   onClick(exportBtn, () => handlers.onExport());
 
-  // A hidden input rather than a visible one: the file control's native
-  // appearance cannot be styled to match the rest of the bar, and the button
-  // needs to carry an enabled state of its own.
-  const fileInput = el("input", { type: "file", accept: "audio/*", hidden: true });
-  fileInput.addEventListener("change", () => {
-    const file = fileInput.files?.[0];
-    // Reset first, so picking the same file twice in a row still fires change.
-    fileInput.value = "";
-    if (file) handlers.onImport(file);
-  });
+  // Import and Clear are per-pane and live in each pane's own header: in the
+  // global bar they would each need a label saying which pane they act on.
+  const compareBtn = el("button", { id: "compare", textContent: "Compare" });
+  onClick(compareBtn, () => handlers.onToggleCompare());
 
-  const importBtn = el("button", { id: "import", textContent: "Import" });
-  onClick(importBtn, () => fileInput.click());
-
-  const clearBtn = el("button", { id: "clear", textContent: "Clear" });
-  onClick(clearBtn, () => handlers.onClear());
+  const linkBtn = el("button", { id: "link", textContent: "Link" });
+  linkBtn.title = "Lock the two panes to scroll and zoom together";
+  onClick(linkBtn, () => handlers.onToggleLink());
 
   const windowSel = select(
     FFT_SIZES,
@@ -166,6 +160,13 @@ export function createControls(
     (v) => `${v}x`,
     (v) => handlers.onSettingsChange({ timeZoom: v }),
   );
+  const splitSel = select(
+    PANE_LAYOUTS,
+    settings.paneLayout,
+    (v) => (v === "stacked" ? "stacked" : "columns"),
+    (v) => handlers.onSettingsChange({ paneLayout: v }),
+  );
+
   const a4Sel = select(
     A4_OPTIONS,
     settings.a4,
@@ -193,15 +194,15 @@ export function createControls(
     record,
     play,
     followBtn,
-    importBtn,
-    clearBtn,
+    compareBtn,
+    linkBtn,
     exportBtn,
-    fileInput,
     group("Window", windowSel),
     group("Max freq", freqSel),
     group("Colors", colorSel),
     group("Zoom", zoomSel),
     group("A4", a4Sel),
+    group("Split", splitSel),
     group("Floor", floor.input),
     floor.readout,
     group("Range", range.input),
@@ -231,11 +232,15 @@ export function createControls(
     setPlayEnabled(enabled) {
       play.disabled = !enabled;
     },
-    setImportEnabled(enabled) {
-      importBtn.disabled = !enabled;
+    setCompareState(on) {
+      compareBtn.dataset.active = String(on);
+      compareBtn.textContent = on ? "Single" : "Compare";
     },
-    setClearEnabled(enabled) {
-      clearBtn.disabled = !enabled;
+    setLinkState(on) {
+      linkBtn.dataset.active = String(on);
+    },
+    setLinkAvailable(available) {
+      linkBtn.disabled = !available;
     },
     setStatus(text) {
       status.textContent = text;

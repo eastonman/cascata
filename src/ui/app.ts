@@ -1,100 +1,57 @@
-import { Analyzer } from "../analysis/analyzer";
 import { decodeAudioFile } from "../audio/decodeFile";
 import { Player } from "../audio/player";
 import type { AudioSource } from "../audio/source";
 import { WebAudioSource } from "../audio/webAudioSource";
 import {
   ANALYSIS_BUDGET_MS,
-  BIN_COUNT,
-  F_MAX,
-  F_MIN,
   HOP,
   IMPORT_WARN_BYTES,
   MAX_IMPORT_BYTES,
   MAX_PLAYBACK_SECONDS,
   RECORD_SECONDS,
 } from "../config";
-import { freqToBin } from "../dsp/logBins";
 import { encodeWav } from "../export/wav";
 import { saveBlob } from "../platform/files";
 import { loadSettings, type Settings, saveSettings } from "../platform/settings";
-import {
-  drawCrosshair,
-  drawNoteRuler,
-  drawPitchCurve,
-  drawPlayCursor,
-  drawPlayhead,
-  drawTimeAxis,
-  formatClock,
-  formatReadout,
-  type OverlayGeometry,
-  yToBin,
-  yToFreq,
-} from "../render/overlay";
-import { WaterfallRenderer } from "../render/waterfall";
-import { planImportCapacity } from "../store/capacity";
-import { ColumnStore } from "../store/columnStore";
-import { PcmRing } from "../store/pcmRing";
+import { formatClock } from "../render/overlay";
+import { planImportCapacity, storeBytesPerSecond } from "../store/capacity";
 import { type ControlsHandle, createControls } from "./controls";
-import { ViewState } from "./viewState";
-
-/** Pointer movement past this is a drag, below it a tap that sets the cursor. */
-const DRAG_THRESHOLD_PX = 4;
-
-interface Pointer {
-  id: number;
-  lastX: number;
-  totalMovement: number;
-}
+import { Pane } from "./pane";
+import { equivalentSample, linkOffset, mirrorView } from "./paneLink";
 
 /**
- * Owns every runtime object and the draw loop.
+ * Orchestrates one or two panes and everything they share.
  *
- * The data path is one-way and matches DESIGN.md §3.3: capture writes PCM and
- * nothing else; the analyzer derives columns from that PCM; rendering reads
- * columns. Nothing downstream can write back, which is what keeps live view
- * and playback view identical.
+ * The device is shared and the panes are not: there is one AudioContext, one
+ * AudioSource, and one Player here, while each Pane owns its own audio,
+ * analysis, view, and canvas. Routing capture to the *armed* pane is what makes
+ * "both panes recording at once" unrepresentable rather than merely forbidden.
  */
 export class App {
-  private readonly canvas: HTMLCanvasElement;
-  private readonly ctx: CanvasRenderingContext2D;
-  private readonly hint: HTMLDivElement;
+  private readonly panesEl: HTMLDivElement;
   private readonly controls: ControlsHandle;
+  private readonly panes: [Pane, Pane];
 
   private settings: Settings;
-  // Typed as the interface, and the AudioContext is owned here rather than
-  // reached out of the source, so a native capture source (DESIGN.md §2.4) can
-  // be substituted without the playback path or this class changing shape.
   private audioContext: AudioContext | null = null;
   private source: AudioSource | null = null;
-  private pcm: PcmRing | null = null;
-  private columns: ColumnStore | null = null;
-  private analyzer: Analyzer | null = null;
   private player: Player | null = null;
-  private readonly waterfall: WaterfallRenderer;
-  private view: ViewState | null = null;
 
-  private sampleRate = 0;
-  /** Seconds the current stores hold. Recording needs RECORD_SECONDS; an import sizes to its file. */
-  private capacitySeconds = 0;
-  private importing = false;
+  private compare = false;
+  private linked = false;
+  private linkOffsetCols = 0;
+  private armed: 0 | 1 = 0;
+  private active: 0 | 1 = 0;
+  private playingPane: 0 | 1 | null = null;
+
   private capturing = false;
-  private cursorCol = 0;
-  private hasCursor = false;
-  private pointer: Pointer | null = null;
-  private hover: { x: number; y: number } | null = null;
+  private importing = false;
   private wakeLock: WakeLockSentinel | null = null;
   private frame = 0;
   private lastFollowing = true;
   private lastStatus = "";
-  /** Until this timestamp, the draw loop leaves a transient message alone. */
   private statusHoldUntil = 0;
   private heldText = "";
-  /** Cached from ResizeObserver: reading clientWidth in the draw loop forces layout 60x/s. */
-  private cssWidth = 0;
-  private cssHeight = 0;
-  /** Derived from settings.freqLimit; recomputed on change rather than per frame. */
-  private maxBin = 0;
 
   constructor(root: HTMLElement) {
     this.settings = loadSettings();
@@ -102,51 +59,46 @@ export class App {
     this.controls = createControls(root, this.settings, {
       onToggleCapture: () => void this.toggleCapture(),
       onTogglePlay: () => void this.togglePlay(),
-      onFollow: () => this.view?.follow(),
+      onFollow: () => this.followActive(),
       onExport: () => this.exportWav(),
-      onImport: (file) => void this.importFile(file),
-      onClear: () => this.clearRecording(),
+      onToggleCompare: () => this.setCompare(!this.compare),
+      onToggleLink: () => this.setLinked(!this.linked),
       onSettingsChange: (patch) => this.applySettings(patch),
     });
 
-    const stage = document.createElement("div");
-    stage.id = "stage";
-    this.canvas = document.createElement("canvas");
-    this.canvas.id = "waterfall";
-    this.hint = document.createElement("div");
-    this.hint.id = "hint";
-    this.hint.textContent = "Press Record to start listening.";
-    stage.append(this.canvas, this.hint);
-    root.append(stage);
+    this.panesEl = document.createElement("div");
+    this.panesEl.id = "panes";
+    root.append(this.panesEl);
 
-    const ctx = this.canvas.getContext("2d", { alpha: false });
-    if (!ctx) throw new Error("2D canvas context unavailable");
-    this.ctx = ctx;
+    const callbacks = {
+      onImport: (pane: Pane, file: File) => void this.importFile(pane, file),
+      onClear: (pane: Pane) => this.clearPane(pane),
+      onArm: (pane: Pane) => this.setArmed(this.indexOf(pane)),
+      onViewChanged: (pane: Pane) => this.mirrorFrom(this.indexOf(pane)),
+      onActivate: (pane: Pane) => this.setActive(this.indexOf(pane)),
+    };
+    this.panes = [new Pane("A", callbacks, this.settings), new Pane("B", callbacks, this.settings)];
+    for (const pane of this.panes) this.panesEl.append(pane.root);
 
-    this.waterfall = new WaterfallRenderer(
-      document.createElement("canvas"),
-      BIN_COUNT,
-      this.settings.colormap,
-    );
-    this.waterfall.setDbRange(this.settings.dbFloor, this.settings.dbRange);
-    this.maxBin = this.computeMaxBin();
+    this.setCompare(false);
+    this.setLinked(false);
+    this.setArmed(0);
+    this.setActive(0);
+    this.applyLayout();
 
     this.controls.setCaptureState(false);
     this.controls.setPlayState(false);
-    this.controls.setFollowState(true);
     this.controls.setExportEnabled(false);
     this.controls.setPlayEnabled(false);
-    this.controls.setImportEnabled(true);
-    this.controls.setClearEnabled(false);
+    for (const pane of this.panes) pane.refreshHeader();
 
-    this.bindPointer();
     this.bindKeyboard();
     this.bindResize();
     this.bindVisibility();
   }
 
   start(): void {
-    this.resizeCanvas();
+    this.resizeAll();
     const loop = () => {
       this.tick();
       this.frame = requestAnimationFrame(loop);
@@ -158,6 +110,82 @@ export class App {
     cancelAnimationFrame(this.frame);
   }
 
+  // --- pane bookkeeping ----------------------------------------------------
+
+  private indexOf(pane: Pane): 0 | 1 {
+    return pane === this.panes[0] ? 0 : 1;
+  }
+
+  private get activePane(): Pane {
+    return this.panes[this.active];
+  }
+
+  /** Panes taking part right now: both in compare mode, otherwise just A. */
+  private get livePanes(): Pane[] {
+    return this.compare ? [this.panes[0], this.panes[1]] : [this.panes[0]];
+  }
+
+  private setActive(index: 0 | 1): void {
+    // Only pane A exists outside compare mode, so focus cannot leave it.
+    this.active = this.compare ? index : 0;
+  }
+
+  private setArmed(index: 0 | 1): void {
+    if (this.capturing) return;
+    this.armed = this.compare ? index : 0;
+    this.panes[0].setArmed(this.armed === 0);
+    this.panes[1].setArmed(this.armed === 1);
+  }
+
+  private setCompare(on: boolean): void {
+    this.compare = on;
+    // Visibility and layout only -- never lifetime. Pane B keeps its audio so
+    // leaving compare mode cannot silently discard an imported file; Clear is
+    // the only thing in this app that destroys audio.
+    this.panes[1].setVisible(on);
+    this.controls.setCompareState(on);
+    this.controls.setLinkAvailable(on);
+    if (!on) {
+      this.setActive(0);
+      this.setArmed(0);
+      if (this.linked) this.setLinked(false);
+    }
+    this.resizeAll();
+  }
+
+  private setLinked(on: boolean): void {
+    const a = this.panes[0].viewState;
+    const b = this.panes[1].viewState;
+    if (on && a && b) {
+      // Freeze whatever alignment the user has already dragged into place, so
+      // pressing Link never moves anything.
+      this.linkOffsetCols = linkOffset(a, b);
+    }
+    this.linked = on && this.compare;
+    this.controls.setLinkState(this.linked);
+  }
+
+  /** Propagates a pan or zoom from `index` to the other pane while linked. */
+  private mirrorFrom(index: 0 | 1): void {
+    this.setActive(index);
+    if (!this.linked) return;
+    const master = this.panes[index].viewState;
+    const follower = this.panes[index === 0 ? 1 : 0].viewState;
+    if (!master || !follower) return;
+
+    const offset = index === 0 ? this.linkOffsetCols : -this.linkOffsetCols;
+    const correction = mirrorView(master, follower, offset);
+    // The follower ran out of its own history before the master did. Pull the
+    // master back rather than letting the two drift apart -- a link that
+    // silently stops holding is worse than one that stops scrolling.
+    if (correction !== 0) master.panColumns(correction);
+  }
+
+  private followActive(): void {
+    this.activePane.viewState?.follow();
+    this.mirrorFrom(this.active);
+  }
+
   // --- capture -------------------------------------------------------------
 
   private async toggleCapture(): Promise<void> {
@@ -165,19 +193,15 @@ export class App {
       await this.source.stop();
       this.capturing = false;
       this.controls.setCaptureState(false);
-      this.controls.setStatus("Stopped");
-      this.controls.setImportEnabled(true);
-      this.controls.setClearEnabled(this.hasRecording());
+      this.notify("Stopped", 2000);
+      this.refreshEnabled();
       void this.releaseWakeLock();
       return;
     }
 
+    const target = this.panes[this.armed];
     let source: AudioSource;
     try {
-      // Created on first capture, not at construction: an AudioContext made
-      // before a user gesture starts suspended, and Safari will not resume it.
-      // Construction and resume are inside the try because both can reject,
-      // and toggleCapture's promise is discarded by the click handler.
       this.audioContext ??= new AudioContext();
       // Not `=== "suspended"`: WebKit also has a non-standard "interrupted"
       // state after a phone call or a route change, and a context left in it
@@ -187,37 +211,30 @@ export class App {
         const web = new WebAudioSource(this.audioContext);
         web.onUnexpectedStop = () => this.handleUnexpectedStop();
         web.onProcessingNotDisabled = (stuck) =>
-          this.controls.setStatus(
+          this.notify(
             `Warning: this device would not disable ${stuck.join(", ")} — levels are unreliable`,
           );
         this.source = web;
       }
       source = this.source;
-      await source.start((chunk) => this.pcm?.write(chunk));
+      await source.start((chunk) => target.writeSamples(chunk));
     } catch (err) {
       this.notify(`Could not start capture: ${(err as Error).message}`);
       return;
     }
 
-    // Stores are sized from the real device rate, which is only known once the
-    // context exists. Rate changes between sessions rebuild them -- and so does
-    // returning from an import, which leaves a ring sized to its file rather
-    // than to RECORD_SECONDS. Recording into that oversized ring would quietly
-    // put the recording path above the DESIGN.md §1.2 budget.
-    if (this.sampleRate !== source.sampleRate || this.capacitySeconds !== RECORD_SECONDS) {
-      this.sampleRate = source.sampleRate;
-      this.buildStores(RECORD_SECONDS);
+    // Rebuild when the rate changed, and also when this pane was last holding
+    // an import: its ring is sized to that file, and recording into it would
+    // quietly put the recording path above the DESIGN.md §1.2 budget.
+    if (target.sampleRate !== source.sampleRate || target.capacitySeconds !== RECORD_SECONDS) {
+      target.build(source.sampleRate, RECORD_SECONDS, this.settings);
     }
+    this.ensurePlayer();
 
     this.capturing = true;
-    this.hint.hidden = true;
+    this.setActive(this.armed);
     this.controls.setCaptureState(true);
-    this.controls.setPlayEnabled(true);
-    this.controls.setExportEnabled(true);
-    // Both replace or destroy the buffer being written to, so neither has a
-    // coherent meaning mid-capture.
-    this.controls.setImportEnabled(false);
-    this.controls.setClearEnabled(false);
+    this.refreshEnabled();
     void this.acquireWakeLock();
   }
 
@@ -226,27 +243,22 @@ export class App {
     if (!this.capturing) return;
     this.capturing = false;
     this.controls.setCaptureState(false);
-    this.controls.setStatus("Capture stopped: the microphone became unavailable");
-    this.controls.setImportEnabled(true);
-    this.controls.setClearEnabled(this.hasRecording());
+    this.notify("Capture stopped: the microphone became unavailable");
+    this.refreshEnabled();
     void this.releaseWakeLock();
   }
 
   // --- import and clear ----------------------------------------------------
 
-  /**
-   * Replaces the recorded PCM with a decoded file.
-   *
-   * Import writes into the same ring capture does, so the waterfall, scrubbing,
-   * playback, crosshair, and WAV export all work on it with no second code
-   * path — DESIGN.md §3.2's "recorded PCM is the only source of truth" is what
-   * makes that free.
-   */
-  private async importFile(file: File): Promise<void> {
-    if (this.capturing || this.importing) return;
+  private async importFile(pane: Pane, file: File): Promise<void> {
+    if (this.importing) return;
+    if (this.capturing && pane === this.panes[this.armed]) {
+      this.notify("Stop recording before importing into this pane", 3000);
+      return;
+    }
     this.importing = true;
-    this.controls.setImportEnabled(false);
-    this.controls.setStatus(`Decoding ${file.name}…`);
+    for (const p of this.panes) p.setImportEnabled(false);
+    this.notify(`Decoding ${file.name}…`, 60000);
 
     try {
       // A file picker click is a user gesture, so a context can be created here
@@ -272,60 +284,49 @@ export class App {
       if (plan.bytes > IMPORT_WARN_BYTES) {
         this.notify(
           `Importing ${formatClock(plan.seconds)} — about ${Math.round(plan.bytes / 1024 ** 2)} MB, which may fail on a phone…`,
+          60000,
         );
       }
 
-      this.sampleRate = rate;
-      if (!this.allocateForImport(plan.seconds)) {
+      if (!this.allocate(pane, rate, plan.seconds)) {
         this.notify("Not enough memory for this file, even reduced");
         return;
       }
+      this.ensurePlayer();
 
-      const kept = Math.min(samples.length, Math.ceil(this.capacitySeconds * rate));
-      this.pcm?.write(kept === samples.length ? samples : samples.subarray(0, kept));
-
+      const kept = Math.min(samples.length, Math.ceil(pane.capacitySeconds * rate));
+      pane.writeSamples(kept === samples.length ? samples : samples.subarray(0, kept));
       // A file is read from its start, so pin there rather than following the
-      // end the way a live recording does. The view has to learn the new range
-      // first: panning against a still-empty view would clamp to -visibleCols
-      // and show a screen of blank.
-      this.hasCursor = true;
-      this.cursorCol = 0;
-      if (this.view) {
-        this.view.setEarliest(0);
-        this.view.setLatest(Math.ceil(kept / HOP));
-        this.view.panColumns(-Number.MAX_SAFE_INTEGER);
-      }
-      this.hint.hidden = true;
-      this.controls.setPlayEnabled(true);
-      this.controls.setExportEnabled(true);
-      this.controls.setClearEnabled(true);
+      // end the way a live recording does.
+      pane.showFromStart(Math.ceil(kept / HOP));
 
+      this.setActive(this.indexOf(pane));
       const truncated = plan.truncated || kept < samples.length;
       this.notify(
         truncated
-          ? `Imported first ${formatClock(kept / rate)} of ${formatClock(duration)} from ${file.name}`
-          : `Imported ${formatClock(duration)} from ${file.name}`,
+          ? `${pane.label}: imported first ${formatClock(kept / rate)} of ${formatClock(duration)}`
+          : `${pane.label}: imported ${formatClock(duration)} from ${file.name}`,
         10000,
       );
     } catch (err) {
       this.notify(`Could not read ${file.name}: ${(err as Error).message}`);
     } finally {
       this.importing = false;
-      this.controls.setImportEnabled(!this.capturing);
+      this.refreshEnabled();
     }
   }
 
   /**
-   * Builds stores for an import, backing off when the engine refuses.
+   * Builds a pane's stores, backing off when the engine refuses.
    *
    * A RangeError from a large typed array is catchable and worth retrying
    * smaller. The other failure mode — iOS killing the tab under memory
    * pressure — produces no error at all and cannot be handled from here.
    */
-  private allocateForImport(seconds: number): boolean {
+  private allocate(pane: Pane, rate: number, seconds: number): boolean {
     for (const fraction of [1, 0.5, 0.25]) {
       try {
-        this.buildStores(seconds * fraction);
+        pane.build(rate, seconds * fraction, this.settings);
         return true;
       } catch (err) {
         if (!(err instanceof RangeError)) throw err;
@@ -334,84 +335,16 @@ export class App {
     return false;
   }
 
-  /** Discards the recording and returns to the empty state. */
-  private clearRecording(): void {
-    if (this.capturing) return;
-
-    this.player?.stop();
-    this.controls.setPlayState(false);
-    this.pcm?.clear();
-    this.analyzer?.reset();
-    this.waterfall.invalidate();
-
-    this.hasCursor = false;
-    this.cursorCol = 0;
-    this.view?.follow();
-    this.hint.hidden = false;
-
-    this.controls.setPlayEnabled(false);
-    this.controls.setExportEnabled(false);
-    this.controls.setClearEnabled(false);
-    this.notify("Cleared", 3000);
-  }
-
-  /**
-   * Shows a message the draw loop will not immediately overwrite.
-   *
-   * updateStatus runs every frame, so a plain setStatus is invisible: it is
-   * replaced before it can be read. Anything the user needs to actually see —
-   * an error, an import result — has to claim the bar for a while.
-   */
-  private notify(text: string, holdMs = 6000): void {
-    this.statusHoldUntil = performance.now() + holdMs;
-    this.heldText = text;
-    this.lastStatus = text;
-    this.controls.setStatus(text);
-  }
-
-  private hasRecording(): boolean {
-    return (this.pcm?.writeIndex ?? 0) > 0;
-  }
-
-  /**
-   * Advances the analyzer for at most ANALYSIS_BUDGET_MS of this frame.
-   *
-   * A live recording produces 46.9 columns/s and this budget affords roughly
-   * 1400, so capture never queues; the budget exists for imports, which drop a
-   * whole file's worth of PCM in at once. Spending a time budget rather than a
-   * fixed column count keeps the frame rate stable across devices that differ
-   * by an order of magnitude in speed.
-   */
-  private pumpWithinBudget(analyzer: Analyzer): void {
-    const deadline = performance.now() + ANALYSIS_BUDGET_MS;
-    do {
-      if (analyzer.pump(64) === 0) return;
-    } while (performance.now() < deadline);
-  }
-
-  private buildStores(capacitySeconds: number): void {
-    this.capacitySeconds = capacitySeconds;
-    const capacity = Math.ceil(capacitySeconds * this.sampleRate);
-    this.pcm = new PcmRing(capacity);
-    this.columns = new ColumnStore(Math.ceil(capacity / HOP), BIN_COUNT);
-    this.analyzer = new Analyzer({
-      sampleRate: this.sampleRate,
-      pcm: this.pcm,
-      columns: this.columns,
-    });
-    this.analyzer.setFftSize(this.settings.fftSize);
-    this.analyzer.setPitchEnabled(this.settings.pitchEnabled);
-
-    this.view = new ViewState({ sampleRate: this.sampleRate });
-    this.view.pxPerCol = this.settings.timeZoom;
-    this.view.widthPx = this.cssWidth;
-
-    if (this.audioContext) {
-      this.player = new Player(this.audioContext);
-      this.player.onEnded = () => this.controls.setPlayState(false);
+  private clearPane(pane: Pane): void {
+    if (this.capturing && pane === this.panes[this.armed]) return;
+    if (this.playingPane === this.indexOf(pane)) {
+      this.player?.stop();
+      this.playingPane = null;
+      this.controls.setPlayState(false);
     }
-
-    this.waterfall.invalidate();
+    pane.clear();
+    this.notify(`${pane.label}: cleared`, 3000);
+    this.refreshEnabled();
   }
 
   // --- settings ------------------------------------------------------------
@@ -419,51 +352,58 @@ export class App {
   private applySettings(patch: Partial<Settings>): void {
     this.settings = { ...this.settings, ...patch };
     saveSettings(this.settings);
-
-    if (patch.fftSize !== undefined) {
-      this.analyzer?.setFftSize(patch.fftSize);
-      // Existing columns keep their old resolution; only new ones change.
-      // Nothing to invalidate, since stored dB values are untouched.
-    }
-    if (patch.pitchEnabled !== undefined) this.analyzer?.setPitchEnabled(patch.pitchEnabled);
-    if (patch.colormap !== undefined) this.waterfall.setColormap(patch.colormap);
-    if (patch.dbFloor !== undefined || patch.dbRange !== undefined) {
-      this.waterfall.setDbRange(this.settings.dbFloor, this.settings.dbRange);
-    }
-    if (patch.timeZoom !== undefined && this.view) {
-      this.view.pxPerCol = patch.timeZoom;
-      this.waterfall.ensureSlots(this.view.visibleCols);
-      this.waterfall.invalidate();
-    }
-    if (patch.freqLimit !== undefined) this.maxBin = this.computeMaxBin();
-    // a4 is read fresh each frame; nothing to do here.
+    for (const pane of this.panes) pane.applySettings(patch, this.settings);
+    if (patch.timeZoom !== undefined) this.mirrorFrom(this.active);
+    if (patch.paneLayout !== undefined) this.applyLayout();
   }
 
-  /** Highest stored bin the current display limit reaches. */
-  private computeMaxBin(): number {
-    const bin = freqToBin(this.settings.freqLimit, F_MIN, F_MAX, BIN_COUNT);
-    return Math.min(BIN_COUNT - 1, Math.max(1, Math.round(bin)));
+  /** Pure layout: no store is rebuilt and no column recomputed. */
+  private applyLayout(): void {
+    this.panesEl.dataset.layout = this.settings.paneLayout;
+    this.resizeAll();
   }
 
   // --- playback and export -------------------------------------------------
 
-  private async togglePlay(): Promise<void> {
-    const { player, pcm, view } = this;
-    if (!player || !pcm || !view) return;
+  private ensurePlayer(): void {
+    if (this.player || !this.audioContext) return;
+    this.player = new Player(this.audioContext);
+    this.player.onEnded = () => {
+      this.playingPane = null;
+      this.controls.setPlayState(false);
+    };
+  }
 
-    if (player.playing) {
-      player.stop();
+  private async togglePlay(): Promise<void> {
+    if (this.player?.playing) {
+      this.player.stop();
+      this.playingPane = null;
       this.controls.setPlayState(false);
       return;
     }
+    const pane = this.activePane;
+    const cursor = pane.cursorCol;
+    const range = pane.pcmRange;
+    if (!range) {
+      this.notify("Nothing to play yet", 3000);
+      return;
+    }
+    const from = cursor !== null ? cursor * HOP : range.earliest;
+    await this.playFrom(this.active, Math.max(range.earliest, from));
+  }
 
-    const from = this.hasCursor ? view.colToSample(this.cursorCol) : pcm.earliestIndex;
-    const start = Math.max(pcm.earliestIndex, from);
+  private async playFrom(index: 0 | 1, startSample: number): Promise<void> {
+    const pane = this.panes[index];
+    const range = pane.pcmRange;
+    this.ensurePlayer();
+    if (!this.player || !range) return;
+
+    const start = Math.min(Math.max(range.earliest, startSample), range.writeIndex);
     // This bound is both the DESIGN.md §7 playback cap and the size of the
-    // buffer copied out of the ring, which is why it lives here and not in Player.
+    // buffer copied out of the ring, which is why it lives here not in Player.
     const count = Math.min(
-      pcm.writeIndex - start,
-      Math.floor(MAX_PLAYBACK_SECONDS * this.sampleRate),
+      range.writeIndex - start,
+      Math.floor(MAX_PLAYBACK_SECONDS * pane.sampleRate),
     );
     if (count <= 0) {
       this.notify("Nothing to play yet", 3000);
@@ -476,79 +416,72 @@ export class App {
       await this.audioContext.resume();
     }
 
-    // Filled in place rather than via a scratch Float32Array: at the cap
-    // and 48 kHz each copy is 57.6 MB, and holding two at once would blow the
-    // 100 MB budget in DESIGN.md §1.2 on its own.
-    player.playInto(this.sampleRate, start, count, (channel) => pcm.read(start, channel));
+    this.player.playInto(pane.sampleRate, start, count, (channel) =>
+      pane.fillSamples(start, channel),
+    );
+    this.playingPane = index;
     this.controls.setPlayState(true);
   }
 
+  /**
+   * Moves focus to the other pane, continuing playback at the matching moment.
+   *
+   * One key for both states: switching panes and auditioning A against B are
+   * the same intent, and splitting them across two keys means remembering which
+   * is which mid-comparison.
+   */
+  private switchPane(): void {
+    if (!this.compare) return;
+    const next: 0 | 1 = this.active === 0 ? 1 : 0;
+
+    if (this.player?.playing && this.playingPane !== null) {
+      const head = this.player.playheadSample;
+      const direction = this.playingPane === 0 ? 1 : -1;
+      const target = equivalentSample(head, direction, this.linkOffsetCols, this.linked);
+      // Keep the cursor in step so stopping and replaying resumes here.
+      this.panes[next].showCursorAt(Math.floor(target / HOP));
+      void this.playFrom(next, target);
+    }
+
+    this.setActive(next);
+    this.notify(`${this.panes[next].label} active`, 1500);
+  }
+
   private exportWav(): void {
-    const { pcm } = this;
-    if (!pcm) return;
-    const start = pcm.earliestIndex;
-    const count = pcm.writeIndex - start;
-    if (count <= 0) {
+    const pane = this.activePane;
+    const range = pane.pcmRange;
+    const count = range ? range.writeIndex - range.earliest : 0;
+    if (!range || count <= 0) {
       this.notify("Nothing recorded to export", 3000);
       return;
     }
+    const pcm = pane.readInt16(range.earliest, count);
+    if (!pcm) return;
 
-    const blob = new Blob([encodeWav(pcm.readInt16(start, count), this.sampleRate)], {
-      type: "audio/wav",
-    });
-    saveBlob(blob, `cascata-${Math.round(count / this.sampleRate)}s.wav`);
+    const blob = new Blob([encodeWav(pcm, pane.sampleRate)], { type: "audio/wav" });
+    saveBlob(blob, `cascata-${pane.label}-${Math.round(count / pane.sampleRate)}s.wav`);
   }
 
   // --- input ---------------------------------------------------------------
-
-  private bindPointer(): void {
-    this.canvas.addEventListener("pointerdown", (e) => {
-      this.canvas.setPointerCapture(e.pointerId);
-      this.pointer = { id: e.pointerId, lastX: e.clientX, totalMovement: 0 };
-    });
-
-    this.canvas.addEventListener("pointermove", (e) => {
-      const rect = this.canvas.getBoundingClientRect();
-      this.hover = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-
-      const p = this.pointer;
-      if (!p || p.id !== e.pointerId) return;
-      const dx = e.clientX - p.lastX;
-      p.lastX = e.clientX;
-      p.totalMovement += Math.abs(dx);
-      if (p.totalMovement > DRAG_THRESHOLD_PX) this.view?.panPixels(dx);
-    });
-
-    const endPointer = (e: PointerEvent) => {
-      const p = this.pointer;
-      if (!p || p.id !== e.pointerId) return;
-      this.pointer = null;
-      if (p.totalMovement <= DRAG_THRESHOLD_PX && this.view) {
-        const rect = this.canvas.getBoundingClientRect();
-        this.cursorCol = this.view.xToCol(e.clientX - rect.left);
-        this.hasCursor = true;
-      }
-    };
-    this.canvas.addEventListener("pointerup", endPointer);
-    this.canvas.addEventListener("pointercancel", endPointer);
-    this.canvas.addEventListener("pointerleave", () => {
-      this.hover = null;
-    });
-  }
 
   private bindKeyboard(): void {
     window.addEventListener("keydown", (e) => {
       const target = e.target as HTMLElement | null;
       if (target && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(target.tagName)) return;
 
-      const view = this.view;
+      const view = this.activePane.viewState;
       switch (e.key) {
         case " ":
           e.preventDefault();
           void this.togglePlay();
           break;
+        case "Tab":
+          e.preventDefault();
+          this.switchPane();
+          break;
         case "Escape":
           this.player?.stop();
+          this.playingPane = null;
           this.controls.setPlayState(false);
           break;
         case "ArrowLeft":
@@ -557,6 +490,7 @@ export class App {
           e.preventDefault();
           const step = Math.max(1, Math.round(view.visibleCols / 10)) * (e.shiftKey ? 5 : 1);
           view.panColumns(e.key === "ArrowLeft" ? -step : step);
+          this.mirrorFrom(this.active);
           break;
         }
       }
@@ -564,36 +498,14 @@ export class App {
   }
 
   private bindResize(): void {
-    const observer = new ResizeObserver(() => this.resizeCanvas());
-    observer.observe(this.canvas);
-    window.addEventListener("resize", () => this.resizeCanvas());
+    const observer = new ResizeObserver(() => this.resizeAll());
+    for (const pane of this.panes) observer.observe(pane.root);
+    window.addEventListener("resize", () => this.resizeAll());
   }
 
-  private resizeCanvas(): void {
+  private resizeAll(): void {
     const dpr = window.devicePixelRatio || 1;
-    const w = this.canvas.clientWidth;
-    const h = this.canvas.clientHeight;
-    if (w === 0 || h === 0) return;
-
-    const bw = Math.round(w * dpr);
-    const bh = Math.round(h * dpr);
-    // Assigning width/height clears the canvas even when the value is
-    // unchanged, and ResizeObserver fires after the frame's rAF callbacks — so
-    // an unconditional assignment composites a blank canvas for the whole of a
-    // window-edge drag.
-    if (this.canvas.width === bw && this.canvas.height === bh && this.cssWidth === w) return;
-    this.canvas.width = bw;
-    this.canvas.height = bh;
-    // Draw in CSS pixels; the backing store carries the device ratio.
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    this.cssWidth = w;
-    this.cssHeight = h;
-
-    if (this.view) {
-      this.view.widthPx = w;
-      this.waterfall.ensureSlots(this.view.visibleCols);
-    }
+    for (const pane of this.livePanes) pane.resize(dpr);
   }
 
   private bindVisibility(): void {
@@ -623,124 +535,111 @@ export class App {
   // --- draw loop -----------------------------------------------------------
 
   private tick(): void {
-    const { view, columns, analyzer, pcm, cssWidth: w, cssHeight: h } = this;
-    if (w === 0 || h === 0) return;
+    const live = this.livePanes;
 
-    this.ctx.fillStyle = "#000";
-    this.ctx.fillRect(0, 0, w, h);
+    // Split the frame budget between panes that still owe analysis, so two
+    // simultaneous imports cost one frame's work rather than two.
+    const busy = live.filter((p) => p.backlogColumns > 0);
+    const share = busy.length > 0 ? ANALYSIS_BUDGET_MS / busy.length : 0;
+    for (const pane of busy) pane.pump(share);
 
-    if (!view || !columns || !analyzer || !pcm) return;
-
-    this.pumpWithinBudget(analyzer);
-    view.setLatest(columns.writeIndex);
-    view.setEarliest(columns.earliestIndex);
-    // Only touch the DOM when the value actually changes; this runs 60x/s.
-    if (view.following !== this.lastFollowing) {
-      this.lastFollowing = view.following;
-      this.controls.setFollowState(view.following);
+    const hoverCols = live.map((p) => p.hoveredCol);
+    for (let i = 0; i < live.length; i++) {
+      const pane = live[i];
+      const otherHover = live.length === 2 ? hoverCols[i === 0 ? 1 : 0] : null;
+      pane.draw(this.settings, {
+        active: this.compare && pane === this.activePane,
+        ghostCol: otherHover === null ? null : this.translateCol(otherHover, i === 0 ? -1 : 1),
+        playheadCol:
+          this.player?.playing && this.playingPane === this.indexOf(pane)
+            ? Math.floor(this.player.playheadSample / HOP)
+            : null,
+      });
+      pane.refreshHeader();
     }
 
-    const player = this.player;
-    if (player?.playing) {
-      const playCol = view.sampleToCol(player.playheadSample);
-      view.ensureVisible(playCol);
+    const following = this.activePane.viewState?.following ?? true;
+    if (following !== this.lastFollowing) {
+      this.lastFollowing = following;
+      this.controls.setFollowState(following);
     }
-
-    this.waterfall.ensureSlots(view.visibleCols);
-    const startCol = view.startCol;
-    const endCol = view.endCol;
-    this.waterfall.sync(columns, startCol, endCol);
-    this.waterfall.blit(
-      this.ctx,
-      { x: 0, y: 0, w, h },
-      startCol,
-      endCol,
-      this.maxBin,
-      view.pxPerCol,
-    );
-
-    const geo: OverlayGeometry = {
-      x: 0,
-      y: 0,
-      w,
-      h,
-      startCol,
-      endCol,
-      pxPerCol: view.pxPerCol,
-      maxBin: this.maxBin,
-      binCount: BIN_COUNT,
-      fMin: F_MIN,
-      fMax: F_MAX,
-      a4: this.settings.a4,
-      hop: HOP,
-      sampleRate: this.sampleRate,
-    };
-
-    drawNoteRuler(this.ctx, geo);
-    drawTimeAxis(this.ctx, geo);
-    if (this.settings.pitchEnabled) drawPitchCurve(this.ctx, geo, columns);
-    if (this.hasCursor) drawPlayCursor(this.ctx, geo, this.cursorCol);
-    if (player?.playing) drawPlayhead(this.ctx, geo, view.sampleToCol(player.playheadSample));
-    this.drawHover(geo, columns);
-
-    this.updateStatus(view, columns);
+    this.updateStatus();
   }
 
-  private drawHover(geo: OverlayGeometry, columns: ColumnStore): void {
-    const hover = this.hover;
-    if (!hover || !this.view) return;
-
-    const col = this.view.xToCol(hover.x);
-    const freq = yToFreq(hover.y, geo);
-    const view = columns.columnView(col);
-    // yToFreq exponentiates the bin position, so converting the frequency back
-    // to a bin would just undo it. Take the bin straight from the y.
-    const bin = Math.round(yToBin(hover.y, geo));
-    const db = view && bin >= 0 && bin < BIN_COUNT ? view[bin] : -127;
-
-    drawCrosshair(
-      this.ctx,
-      geo,
-      hover.x,
-      hover.y,
-      formatReadout({
-        timeSec: this.view.colToTime(col),
-        freq,
-        db,
-        a4: this.settings.a4,
-      }),
-    );
+  /** A column in one pane expressed in the other's timeline. */
+  private translateCol(col: number, direction: 1 | -1): number {
+    return this.linked ? col + direction * this.linkOffsetCols : col;
   }
 
-  /** Status text only resolves to a tenth of a second, so refreshing it 60x/s is wasted DOM work. */
-  private updateStatus(view: ViewState, columns: ColumnStore): void {
-    // While an import backlog drains, progress is more useful than the buffer
-    // length -- and it is the only signal that the app is doing anything.
-    const analyzer = this.analyzer;
-    const pcm = this.pcm;
-    if (!this.capturing && analyzer && pcm) {
-      const target = Math.floor(pcm.writeIndex / HOP);
-      if (target > 0 && analyzer.cursor < target) {
-        const pct = Math.floor((analyzer.cursor / target) * 100);
-        // An import's result and its progress are both worth seeing, and an
-        // import is exactly when a backlog exists — so carry the held message
-        // alongside the percentage instead of letting one evict the other.
-        const held = performance.now() < this.statusHoldUntil ? `${this.heldText} · ` : "";
-        const text = `${held}Analysing… ${pct}%`;
-        if (text !== this.lastStatus) {
-          this.lastStatus = text;
-          this.controls.setStatus(text);
-        }
-        return;
-      }
+  // --- status --------------------------------------------------------------
+
+  /**
+   * Shows a message the draw loop will not immediately overwrite.
+   *
+   * updateStatus runs every frame, so a plain setStatus is invisible: it is
+   * replaced before it can be read.
+   */
+  private notify(text: string, holdMs = 6000): void {
+    this.statusHoldUntil = performance.now() + holdMs;
+    this.heldText = text;
+    this.lastStatus = text;
+    this.controls.setStatus(text);
+  }
+
+  private refreshEnabled(): void {
+    for (const pane of this.panes) {
+      const armedAndRecording = this.capturing && pane === this.panes[this.armed];
+      pane.setImportEnabled(!this.importing && !armedAndRecording);
+      pane.refreshHeader();
+    }
+    const has = this.activePane.hasData;
+    this.controls.setPlayEnabled(has);
+    this.controls.setExportEnabled(has);
+  }
+
+  private updateStatus(): void {
+    const live = this.livePanes;
+
+    // While an import backlog drains, progress is the only signal that the app
+    // is doing anything, so it outranks a held message.
+    const busy = live.filter((p) => p.backlogColumns > 0 && p.hasData);
+    if (busy.length > 0 && !this.capturing) {
+      const parts = busy.map((p) => {
+        const range = p.pcmRange;
+        const target = range ? Math.floor(range.writeIndex / HOP) : 0;
+        const done = target > 0 ? Math.floor(((target - p.backlogColumns) / target) * 100) : 0;
+        return this.compare ? `${p.label} ${done}%` : `${done}%`;
+      });
+      const held = performance.now() < this.statusHoldUntil ? `${this.heldText} · ` : "";
+      this.setStatusIfChanged(`${held}Analysing… ${parts.join(" · ")}`);
+      return;
     }
 
     if (performance.now() < this.statusHoldUntil) return;
 
-    const seconds = view.colToTime(columns.writeIndex - columns.earliestIndex);
+    const pane = this.activePane;
+    const range = pane.pcmRange;
+    const seconds =
+      range && pane.sampleRate > 0 ? (range.writeIndex - range.earliest) / pane.sampleRate : 0;
     const mode = this.capturing ? "Recording" : "Stopped";
-    const follow = view.following ? "live" : "pinned";
-    const text = `${mode} · ${follow} · ${formatClock(seconds)} buffered`;
+    const where = this.compare ? ` · ${pane.label}` : "";
+    const follow = pane.viewState?.following ? "live" : "pinned";
+    const link = this.compare ? (this.linked ? " · linked" : " · unlinked") : "";
+    this.setStatusIfChanged(
+      `${mode}${where} · ${follow}${link} · ${formatClock(seconds)} buffered${this.memoryNote()}`,
+    );
+  }
+
+  /** Only shown once the two panes together are heavy enough to explain a slow tab. */
+  private memoryNote(): string {
+    let bytes = 0;
+    for (const pane of this.panes) {
+      if (pane.sampleRate > 0) bytes += pane.capacitySeconds * storeBytesPerSecond(pane.sampleRate);
+    }
+    return bytes > IMPORT_WARN_BYTES ? ` · ${Math.round(bytes / 1024 ** 2)} MB` : "";
+  }
+
+  private setStatusIfChanged(text: string): void {
     if (text === this.lastStatus) return;
     this.lastStatus = text;
     this.controls.setStatus(text);
