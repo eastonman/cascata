@@ -18,6 +18,17 @@ import { planImportCapacity, storeBytesPerSecond } from "../store/capacity";
 import { type ControlsHandle, createControls } from "./controls";
 import { Pane } from "./pane";
 import { equivalentSample, linkOffset, mirrorView } from "./paneLink";
+import {
+  INITIAL_SELECTION,
+  other,
+  type PaneIndex,
+  type Selection,
+  setActive as selectActive,
+  setArmed as selectArmed,
+  setCompare as selectCompare,
+  setLinked as selectLinked,
+} from "./paneSelection";
+import { type PaneStatus, statusText } from "./statusText";
 
 /**
  * Orchestrates one or two panes and everything they share.
@@ -37,12 +48,10 @@ export class App {
   private source: AudioSource | null = null;
   private player: Player | null = null;
 
-  private compare = false;
-  private linked = false;
+  /** Which pane is shown, focused, armed, and linked. Rules live in paneSelection. */
+  private selection: Selection = INITIAL_SELECTION;
   private linkOffsetCols = 0;
-  private armed: 0 | 1 = 0;
-  private active: 0 | 1 = 0;
-  private playingPane: 0 | 1 | null = null;
+  private playingPane: PaneIndex | null = null;
 
   private capturing = false;
   private importing = false;
@@ -112,7 +121,23 @@ export class App {
 
   // --- pane bookkeeping ----------------------------------------------------
 
-  private indexOf(pane: Pane): 0 | 1 {
+  private get compare(): boolean {
+    return this.selection.compare;
+  }
+
+  private get linked(): boolean {
+    return this.selection.linked;
+  }
+
+  private get active(): PaneIndex {
+    return this.selection.active;
+  }
+
+  private get armed(): PaneIndex {
+    return this.selection.armed;
+  }
+
+  private indexOf(pane: Pane): PaneIndex {
     return pane === this.panes[0] ? 0 : 1;
   }
 
@@ -125,31 +150,26 @@ export class App {
     return this.compare ? [this.panes[0], this.panes[1]] : [this.panes[0]];
   }
 
-  private setActive(index: 0 | 1): void {
-    // Only pane A exists outside compare mode, so focus cannot leave it.
-    this.active = this.compare ? index : 0;
+  private setActive(index: PaneIndex): void {
+    this.selection = selectActive(this.selection, index);
   }
 
-  private setArmed(index: 0 | 1): void {
-    if (this.capturing) return;
-    this.armed = this.compare ? index : 0;
+  private setArmed(index: PaneIndex): void {
+    this.selection = selectArmed(this.selection, index, this.capturing);
     this.panes[0].setArmed(this.armed === 0);
     this.panes[1].setArmed(this.armed === 1);
   }
 
   private setCompare(on: boolean): void {
-    this.compare = on;
     // Visibility and layout only -- never lifetime. Pane B keeps its audio so
     // leaving compare mode cannot silently discard an imported file; Clear is
     // the only thing in this app that destroys audio.
-    this.panes[1].setVisible(on);
-    this.controls.setCompareState(on);
-    this.controls.setLinkAvailable(on);
-    if (!on) {
-      this.setActive(0);
-      this.setArmed(0);
-      if (this.linked) this.setLinked(false);
-    }
+    this.selection = selectCompare(this.selection, on);
+    this.panes[1].setVisible(this.compare);
+    this.controls.setCompareState(this.compare);
+    this.controls.setLinkAvailable(this.compare);
+    this.controls.setLinkState(this.linked);
+    this.setArmed(this.armed);
     this.resizeAll();
   }
 
@@ -161,16 +181,16 @@ export class App {
       // pressing Link never moves anything.
       this.linkOffsetCols = linkOffset(a, b);
     }
-    this.linked = on && this.compare;
+    this.selection = selectLinked(this.selection, on);
     this.controls.setLinkState(this.linked);
   }
 
   /** Propagates a pan or zoom from `index` to the other pane while linked. */
-  private mirrorFrom(index: 0 | 1): void {
+  private mirrorFrom(index: PaneIndex): void {
     this.setActive(index);
     if (!this.linked) return;
     const master = this.panes[index].viewState;
-    const follower = this.panes[index === 0 ? 1 : 0].viewState;
+    const follower = this.panes[other(index)].viewState;
     if (!master || !follower) return;
 
     const offset = index === 0 ? this.linkOffsetCols : -this.linkOffsetCols;
@@ -392,7 +412,7 @@ export class App {
     await this.playFrom(this.active, Math.max(range.earliest, from));
   }
 
-  private async playFrom(index: 0 | 1, startSample: number): Promise<void> {
+  private async playFrom(index: PaneIndex, startSample: number): Promise<void> {
     const pane = this.panes[index];
     const range = pane.pcmRange;
     this.ensurePlayer();
@@ -432,7 +452,7 @@ export class App {
    */
   private switchPane(): void {
     if (!this.compare) return;
-    const next: 0 | 1 = this.active === 0 ? 1 : 0;
+    const next = other(this.active);
 
     if (this.player?.playing && this.playingPane !== null) {
       const head = this.player.playheadSample;
@@ -597,50 +617,32 @@ export class App {
     this.controls.setExportEnabled(has);
   }
 
+  /** Collects what the status bar needs; statusText decides what it says. */
+  private paneStatus(pane: Pane): PaneStatus {
+    return {
+      label: pane.label,
+      hasData: pane.hasData,
+      analysisProgress: pane.analysisProgress,
+      backlogColumns: pane.backlogColumns,
+      durationSeconds: pane.model.durationSeconds,
+      following: pane.viewState?.following ?? true,
+      bytes: pane.sampleRate > 0 ? pane.capacitySeconds * storeBytesPerSecond(pane.sampleRate) : 0,
+    };
+  }
+
   private updateStatus(): void {
-    const live = this.livePanes;
-
-    // While an import backlog drains, progress is the only signal that the app
-    // is doing anything, so it outranks a held message.
-    const busy = live.filter((p) => p.backlogColumns > 0 && p.hasData);
-    if (busy.length > 0 && !this.capturing) {
-      const parts = busy.map((p) => {
-        const range = p.pcmRange;
-        const target = range ? Math.floor(range.writeIndex / HOP) : 0;
-        const done = target > 0 ? Math.floor(((target - p.backlogColumns) / target) * 100) : 0;
-        return this.compare ? `${p.label} ${done}%` : `${done}%`;
-      });
-      const held = performance.now() < this.statusHoldUntil ? `${this.heldText} · ` : "";
-      this.setStatusIfChanged(`${held}Analysing… ${parts.join(" · ")}`);
-      return;
-    }
-
-    if (performance.now() < this.statusHoldUntil) return;
-
-    const pane = this.activePane;
-    const range = pane.pcmRange;
-    const seconds =
-      range && pane.sampleRate > 0 ? (range.writeIndex - range.earliest) / pane.sampleRate : 0;
-    const mode = this.capturing ? "Recording" : "Stopped";
-    const where = this.compare ? ` · ${pane.label}` : "";
-    const follow = pane.viewState?.following ? "live" : "pinned";
-    const link = this.compare ? (this.linked ? " · linked" : " · unlinked") : "";
-    this.setStatusIfChanged(
-      `${mode}${where} · ${follow}${link} · ${formatClock(seconds)} buffered${this.memoryNote()}`,
-    );
-  }
-
-  /** Only shown once the two panes together are heavy enough to explain a slow tab. */
-  private memoryNote(): string {
-    let bytes = 0;
-    for (const pane of this.panes) {
-      if (pane.sampleRate > 0) bytes += pane.capacitySeconds * storeBytesPerSecond(pane.sampleRate);
-    }
-    return bytes > IMPORT_WARN_BYTES ? ` · ${Math.round(bytes / 1024 ** 2)} MB` : "";
-  }
-
-  private setStatusIfChanged(text: string): void {
-    if (text === this.lastStatus) return;
+    const text = statusText({
+      panes: this.livePanes.map((p) => this.paneStatus(p)),
+      activeIndex: this.compare ? this.active : 0,
+      capturing: this.capturing,
+      compare: this.compare,
+      linked: this.linked,
+      held: this.heldText ? { text: this.heldText, until: this.statusHoldUntil } : null,
+      now: performance.now(),
+      memoryNoticeBytes: IMPORT_WARN_BYTES,
+    });
+    // Null means a transient message still owns the bar.
+    if (text === null || text === this.lastStatus) return;
     this.lastStatus = text;
     this.controls.setStatus(text);
   }
