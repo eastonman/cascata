@@ -34,6 +34,7 @@ const PITCH_COLOR = "rgba(90,255,170,0.95)";
 const CURSOR_COLOR = "rgba(255,255,255,0.75)";
 const PLAYHEAD_COLOR = "rgba(255,120,120,0.95)";
 const CROSSHAIR_COLOR = "rgba(255,255,255,0.5)";
+const GHOST_COLOR = "rgba(255,255,255,0.28)";
 const LABEL_FONT = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
 
 /** Candidate time-tick intervals; the first one wide enough on screen wins. */
@@ -206,6 +207,20 @@ function verticalLine(
   ctx.lineTo(Math.round(x) + 0.5, g.y + g.h);
   ctx.stroke();
   ctx.restore();
+}
+
+/**
+ * Dimmed: the moment the pointer is over in the *other* pane.
+ *
+ * Comparing two spectrograms otherwise means converting times by eye at every
+ * glance. This is the same vertical line the cursors use, so it costs nothing.
+ */
+export function drawGhostCursor(
+  ctx: CanvasRenderingContext2D,
+  g: OverlayGeometry,
+  col: number,
+): void {
+  verticalLine(ctx, g, col, GHOST_COLOR, [1, 3]);
 }
 
 /** Dashed: where playback would start. */
