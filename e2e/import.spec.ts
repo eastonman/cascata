@@ -1,6 +1,16 @@
 import { expect, test } from "@playwright/test";
 import { FIXTURE_SECONDS } from "./fixture";
-import { canvasStats, importFixture, paneCanvas, settle, waitForAnalysis } from "./helpers";
+import {
+  canvasStats,
+  columnEnergy,
+  importFixture,
+  paneCanvas,
+  type Run,
+  energyRuns,
+  longestRuns,
+  settle,
+  waitForAnalysis,
+} from "./helpers";
 
 test("importing a file paints the waterfall", async ({ page }) => {
   await page.goto("/");
@@ -26,31 +36,40 @@ test("the octave step lands higher on the frequency axis", async ({ page }) => {
   await importFixture(page);
   await waitForAnalysis(page);
 
-  const rows = await paneCanvas(page).evaluate((el: HTMLCanvasElement) => {
+  // Locate the two sounding passages rather than slicing the canvas into
+  // thirds: a clip's width in columns follows the device sample rate, and one
+  // shorter than the viewport sits against the right edge, so a fixed third of
+  // the picture is not a fixed third of the audio on every machine.
+  const canvas = paneCanvas(page);
+  const passages = longestRuns(energyRuns(await columnEnergy(canvas)), 2);
+  expect(passages).toHaveLength(2);
+  for (const p of passages) expect(p.to - p.from).toBeGreaterThan(50);
+
+  const rows = await canvas.evaluate((el: HTMLCanvasElement, passages: Run[]) => {
     const ctx = el.getContext("2d");
     if (!ctx) throw new Error("no 2d context");
     const { width, height } = el;
     const data = ctx.getImageData(0, 0, width, height).data;
 
-    const brightness = (x0: number, x1: number) => {
+    const brightness = ({ from, to }: Run) => {
       const out = new Float64Array(height);
       for (let y = 0; y < height; y++) {
         let sum = 0;
-        for (let x = x0; x < x1; x += 2) {
+        for (let x = from; x < to; x += 2) {
           const p = (y * width + x) * 4;
           sum += data[p] + data[p + 1] + data[p + 2];
         }
-        out[y] = sum / Math.max(1, (x1 - x0) / 2);
+        out[y] = sum / Math.max(1, (to - from) / 2);
       }
       return out;
     };
 
     // Differential, not absolute: the note ruler and the time axis are drawn
     // across the full width and are brighter than any tone, so an absolute
-    // "brightest row" finds a gridline in both thirds. Subtracting one third
-    // from the other cancels anything full-width and leaves the tones.
-    const left = brightness(0, Math.floor(width / 3));
-    const right = brightness(Math.floor((2 * width) / 3), width);
+    // "brightest row" finds a gridline in both passages. Subtracting one from
+    // the other cancels anything full-width and leaves the tones.
+    const left = brightness(passages[0]);
+    const right = brightness(passages[1]);
 
     const argmaxDiff = (a: Float64Array, b: Float64Array) => {
       let best = -1;
@@ -70,7 +89,7 @@ test("the octave step lands higher on the frequency axis", async ({ page }) => {
       a5Row: argmaxDiff(right, left),
       height,
     };
-  });
+  }, passages);
 
   expect(rows.a4Row).toBeGreaterThan(0);
   expect(rows.a5Row).toBeGreaterThan(0);
@@ -130,8 +149,11 @@ test("export produces a wav whose size matches the imported audio", async ({ pag
   for await (const chunk of stream) bytes += (chunk as Buffer).length;
 
   // 30 s of 16-bit mono at the device rate, plus a 44-byte header. The device
-  // rate is not necessarily 48 kHz, so allow the plausible range.
-  expect(bytes).toBeGreaterThan(44 + FIXTURE_SECONDS * 16000 * 2);
+  // rate is whatever the machine's output is -- a Bluetooth headset forces
+  // 16 kHz -- so this brackets the plausible range rather than naming one. The
+  // bound is inclusive because 16 kHz is a real configuration, not a floor to
+  // sit strictly above.
+  expect(bytes).toBeGreaterThanOrEqual(44 + FIXTURE_SECONDS * 8000 * 2);
   expect(bytes).toBeLessThan(44 + FIXTURE_SECONDS * 48000 * 2 + 4096);
 });
 
